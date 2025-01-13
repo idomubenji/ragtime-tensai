@@ -1,8 +1,10 @@
 import { getUserMessages, lookupUserByUsername } from '../supabase/users';
 import { PineconeClient } from '@pinecone-database/pinecone';
 import { vectorizeMessage } from '../pinecone/messages';
-import { supabase } from '../supabase/client';
+import { createSupabaseClient } from '../supabase/createSupabaseClient';
 import type { Database } from '../supabase/types';
+import type { Environment } from '../supabase/environment';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 type SupabaseMessage = Database['public']['Tables']['messages']['Row'];
 type PineconeMessage = {
@@ -19,9 +21,13 @@ interface SyncState {
 export class MessageSyncJob {
   private lastSyncTimestamp: string;
   private pineconeClient: PineconeClient;
+  private supabase: SupabaseClient<Database>;
+  private environment: Environment;
 
-  constructor(pineconeClient: PineconeClient) {
+  constructor(pineconeClient: PineconeClient, environment: Environment) {
     this.pineconeClient = pineconeClient;
+    this.environment = environment;
+    this.supabase = createSupabaseClient(environment);
     // Default to current timestamp if no previous sync
     this.lastSyncTimestamp = new Date().toISOString();
   }
@@ -50,7 +56,7 @@ export class MessageSyncJob {
   private async getNewMessages(): Promise<SupabaseMessage[]> {
     try {
       // Get all messages created after the last sync
-      const { data: messages, error } = await supabase
+      const { data: messages, error } = await this.supabase
         .from('messages')
         .select('*')
         .gt('created_at', this.lastSyncTimestamp)
@@ -74,9 +80,14 @@ export class MessageSyncJob {
     // Process messages in parallel with both models
     await Promise.all(messages.map(async (message) => {
       try {
-        // Get user info for the message
-        const user = await lookupUserByUsername(message.user_id);
-        if (!user) {
+        // Get user info for the message using environment-specific client
+        const { data: user, error: userError } = await this.supabase
+          .from('users')
+          .select('*')
+          .eq('id', message.user_id)
+          .single();
+
+        if (userError || !user) {
           console.error(`User not found for message ${message.id}`);
           failures.push(message.id);
           return;
@@ -90,10 +101,10 @@ export class MessageSyncJob {
           created_at: message.created_at,
         };
 
-        // Vectorize with both large and small models
+        // Use environment-specific Pinecone index
         const [largeSuccess, smallSuccess] = await Promise.all([
-          vectorizeMessage(pineconeMessage, false), // Large model
-          vectorizeMessage(pineconeMessage, true)   // Small model
+          vectorizeMessage(pineconeMessage, false, this.environment), // Large model
+          vectorizeMessage(pineconeMessage, true, this.environment)   // Small model
         ]);
 
         if (!largeSuccess || !smallSuccess) {

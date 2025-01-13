@@ -30,10 +30,10 @@ describe('MessageSyncScheduler', () => {
     
     // Create mock Pinecone client
     mockPineconeClient = {
-      init: jest.fn().mockResolvedValue(undefined),
+      init: jest.fn().mockResolvedValue(undefined)
     } as any;
 
-    scheduler = new MessageSyncScheduler(mockPineconeClient);
+    scheduler = new MessageSyncScheduler(mockPineconeClient, 'development');
   });
 
   describe('start', () => {

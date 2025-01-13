@@ -1,7 +1,7 @@
 {
   "crons": [{
     "path": "/api/cron/sync-messages",
-    "schedule": "*/5 * * * *"
+    "schedule": "0 0 * * *"
   }],
   "framework": "nextjs",
   "headers": [

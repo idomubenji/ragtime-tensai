@@ -79,4 +79,6 @@ export interface Database {
       channel_role: ChannelRole;
     };
   };
-}; 
+};
+
+export type Message = Database['public']['Tables']['messages']['Row']; 

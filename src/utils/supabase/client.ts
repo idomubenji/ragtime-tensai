@@ -5,10 +5,10 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
   throw new Error('Missing environment variable: NEXT_PUBLIC_SUPABASE_URL');
 }
 
-// Use service role key for tests, anon key for other environments
-const supabaseKey = process.env.NODE_ENV === 'test' 
-  ? process.env.SUPABASE_SERVICE_ROLE_KEY 
-  : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// Use service role key for tests and development
+const supabaseKey = process.env.NODE_ENV === 'production'
+  ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  : process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseKey) {
   throw new Error('Missing Supabase key');

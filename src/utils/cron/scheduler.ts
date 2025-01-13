@@ -1,13 +1,14 @@
 import cron from 'node-cron';
 import { MessageSyncJob } from './message-sync';
 import { PineconeClient } from '@pinecone-database/pinecone';
+import type { Environment } from '../supabase/environment';
 
 export class MessageSyncScheduler {
   private syncJob: MessageSyncJob;
   private cronJob: cron.ScheduledTask | null = null;
 
-  constructor(pineconeClient: PineconeClient) {
-    this.syncJob = new MessageSyncJob(pineconeClient);
+  constructor(pineconeClient: PineconeClient, environment: Environment = 'development') {
+    this.syncJob = new MessageSyncJob(pineconeClient, environment);
   }
 
   /**
