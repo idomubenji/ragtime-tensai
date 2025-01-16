@@ -22,7 +22,7 @@ export class MessageSyncJob {
   private supabase: SupabaseClient<Database>;
   private vectorClient: SupabaseClient<Database>;
   private environment: Environment;
-  private readonly BATCH_SIZE = 10;
+  private readonly BATCH_SIZE = 5;
 
   constructor(environment: Environment) {
     this.environment = environment;
