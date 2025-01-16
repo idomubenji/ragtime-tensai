@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "build:ci": "npm run typecheck && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "jest",

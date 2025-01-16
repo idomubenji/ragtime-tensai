@@ -4,7 +4,7 @@
     "schedule": "0 0 * * *"
   }],
   "framework": "nextjs",
-  "buildCommand": "NODE_OPTIONS='--trace-warnings' npm run build",
+  "buildCommand": "npm run build:ci",
   "outputDirectory": ".next",
   "headers": [
     {
@@ -34,7 +34,7 @@
       "NEXT_TELEMETRY_DISABLED": "1",
       "NODE_ENV": "production",
       "CI": "1",
-      "DEBUG": "next:*"
+      "NEXT_TYPECHECK_STRICT": "true"
     }
   }
 } 
