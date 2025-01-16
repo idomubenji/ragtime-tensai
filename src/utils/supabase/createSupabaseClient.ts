@@ -43,17 +43,19 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
     const url = environment === 'development'
       ? process.env.NEXT_PUBLIC_SUPABASE_URL_DEV
       : process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const key = environment === 'development'
+      ? process.env.SUPABASE_KEY_DEV
+      : process.env.SUPABASE_KEY_PROD;
 
     // Check each required variable individually
     const missingVars = [];
-    if (environment === 'development' && !process.env.NEXT_PUBLIC_SUPABASE_URL_DEV) {
-      missingVars.push('NEXT_PUBLIC_SUPABASE_URL_DEV');
+    if (environment === 'development') {
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL_DEV) missingVars.push('NEXT_PUBLIC_SUPABASE_URL_DEV');
+      if (!process.env.SUPABASE_KEY_DEV) missingVars.push('SUPABASE_KEY_DEV');
+    } else {
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL_PROD) missingVars.push('NEXT_PUBLIC_SUPABASE_URL_PROD');
+      if (!process.env.SUPABASE_KEY_PROD) missingVars.push('SUPABASE_KEY_PROD');
     }
-    if (environment === 'production' && !process.env.NEXT_PUBLIC_SUPABASE_URL_PROD) {
-      missingVars.push('NEXT_PUBLIC_SUPABASE_URL_PROD');
-    }
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missingVars.push('SUPABASE_SERVICE_ROLE_KEY');
 
     if (missingVars.length > 0) {
       const errorMsg = `Missing required Supabase environment variables: ${missingVars.join(', ')}`;
