@@ -1,4 +1,4 @@
-import { supabase } from './client';
+import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { createSupabaseClient } from './createSupabaseClient';
 import type { Environment } from './environment';
@@ -8,6 +8,12 @@ type Message = Database['public']['Tables']['messages']['Row'];
 
 export async function lookupUserByUsername(username: string, environment: Environment = 'development'): Promise<User | null> {
   const client = createSupabaseClient(environment, 'default');
+  console.log('Looking up user with client:', {
+    environment,
+    username,
+    hasClient: !!client
+  });
+  
   const { data, error } = await client
     .from('users')
     .select('*')
@@ -26,6 +32,13 @@ export async function lookupUserByUsername(username: string, environment: Enviro
 
 export async function getUserMessages(userId: string, environment: Environment = 'development', limit = 100): Promise<Message[]> {
   const client = createSupabaseClient(environment, 'default');
+  console.log('Getting user messages with client:', {
+    environment,
+    userId,
+    limit,
+    hasClient: !!client
+  });
+  
   const { data, error } = await client
     .from('messages')
     .select('*')
@@ -48,6 +61,14 @@ export async function getUserChannelMessages(
   limit = 50
 ): Promise<Message[]> {
   const client = createSupabaseClient(environment, 'default');
+  console.log('Getting user channel messages with client:', {
+    environment,
+    userId,
+    channelId,
+    limit,
+    hasClient: !!client
+  });
+  
   const { data, error } = await client
     .from('messages')
     .select('*')

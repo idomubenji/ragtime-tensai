@@ -31,8 +31,8 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
       : process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
     
     const key = environment === 'development'
-      ? process.env.SUPABASE_KEY_DEV
-      : process.env.SUPABASE_KEY_PROD;
+      ? process.env.SUPABASE_SERVICE_ROLE_KEY
+      : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_PROD;
 
     if (!url || !key) {
       throw new Error(`Missing required Supabase environment variables for ${environment} environment`);
