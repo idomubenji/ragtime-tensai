@@ -15,6 +15,13 @@ if (!supabaseKey) {
   throw new Error('Missing Supabase key');
 }
 
+console.log('Creating default Supabase client:', {
+  hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL_PROD,
+  hasKey: !!supabaseKey,
+  nodeEnv: process.env.NODE_ENV,
+  url: process.env.NEXT_PUBLIC_SUPABASE_URL_PROD?.substring(0, 10) + '...'
+});
+
 export const supabase = createClient<Database>(
   process.env.NEXT_PUBLIC_SUPABASE_URL_PROD,
   supabaseKey,
