@@ -25,14 +25,22 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
       }
     );
   } else {
-    // For regular operations, use the default database credentials
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-      throw new Error('Missing required Supabase environment variables');
+    // For regular operations, use environment-specific credentials
+    const url = environment === 'development' 
+      ? process.env.SUPABASE_URL_DEV 
+      : process.env.SUPABASE_URL_PROD;
+    
+    const key = environment === 'development'
+      ? process.env.SUPABASE_KEY_DEV
+      : process.env.SUPABASE_KEY_PROD;
+
+    if (!url || !key) {
+      throw new Error(`Missing required Supabase environment variables for ${environment} environment`);
     }
 
     return createClient<Database>(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_KEY,
+      url,
+      key,
       {
         auth: {
           persistSession: false

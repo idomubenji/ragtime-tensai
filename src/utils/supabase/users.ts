@@ -1,11 +1,14 @@
 import { supabase } from './client';
 import type { Database } from './types';
+import { createSupabaseClient } from './createSupabaseClient';
+import type { Environment } from './environment';
 
 type User = Database['public']['Tables']['users']['Row'];
 type Message = Database['public']['Tables']['messages']['Row'];
 
-export async function lookupUserByUsername(username: string): Promise<User | null> {
-  const { data, error } = await supabase
+export async function lookupUserByUsername(username: string, environment: Environment = 'development'): Promise<User | null> {
+  const client = createSupabaseClient(environment, 'default');
+  const { data, error } = await client
     .from('users')
     .select('*')
     .eq('name', username)
@@ -21,8 +24,9 @@ export async function lookupUserByUsername(username: string): Promise<User | nul
   return data;
 }
 
-export async function getUserMessages(userId: string, limit = 100): Promise<Message[]> {
-  const { data, error } = await supabase
+export async function getUserMessages(userId: string, environment: Environment = 'development', limit = 100): Promise<Message[]> {
+  const client = createSupabaseClient(environment, 'default');
+  const { data, error } = await client
     .from('messages')
     .select('*')
     .eq('user_id', userId)
@@ -40,9 +44,11 @@ export async function getUserMessages(userId: string, limit = 100): Promise<Mess
 export async function getUserChannelMessages(
   userId: string, 
   channelId: string,
+  environment: Environment = 'development',
   limit = 50
 ): Promise<Message[]> {
-  const { data, error } = await supabase
+  const client = createSupabaseClient(environment, 'default');
+  const { data, error } = await client
     .from('messages')
     .select('*')
     .eq('user_id', userId)

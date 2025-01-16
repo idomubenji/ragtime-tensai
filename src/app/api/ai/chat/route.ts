@@ -3,7 +3,7 @@ import { lookupUserByUsername } from '@/utils/supabase/users';
 import { getUserMessages } from '@/utils/supabase/users';
 import { generateResponse } from '@/utils/langchain/response';
 import { validateApiKey, getAuthErrorResponse } from '@/utils/auth/api-auth';
-import { validateEnvironment, EnvironmentError } from '@/utils/supabase/environment';
+import { validateEnvironment, EnvironmentError, type Environment } from '@/utils/supabase/environment';
 import { createSupabaseClient } from '@/utils/supabase/createSupabaseClient';
 import { initializeLangchainTracing } from '@/utils/langchain/tracing';
 import { findSimilarMessagesSmall, getVectorTableName, type SimilaritySearchResult } from '@/utils/supabase/vectors';
@@ -46,13 +46,13 @@ function cleanCaches() {
 /**
  * Get cached user or fetch from database
  */
-async function getCachedUser(username: string) {
+async function getCachedUser(username: string, environment: Environment) {
   const cached = userCache.get(username);
   if (cached && Date.now() - cached.timestamp < USER_CACHE_TTL) {
     return cached.user;
   }
 
-  const user = await lookupUserByUsername(username);
+  const user = await lookupUserByUsername(username, environment);
   if (user) {
     userCache.set(username, { user, timestamp: Date.now() });
   }
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
       environment,
       cacheHit: userCache.has(mentionedUsername)
     });
-    user = await getCachedUser(mentionedUsername);
+    user = await getCachedUser(mentionedUsername, environment);
     if (!user) {
       console.log('User not found, falling back to all users:', {
         mentionedUsername,
@@ -135,13 +135,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (user) {
-      userMessages = await getUserMessages(user.id).catch(err => {
+      userMessages = await getUserMessages(user.id, environment).catch(err => {
         console.error('Failed to get user messages:', err);
         return []; // Return empty array to allow fallback behavior
       });
     } else {
       // Fetch messages from all users when no specific user found
-      const { data, error } = await supabase
+      const client = createSupabaseClient(environment, 'default');
+      const { data, error } = await client
         .from('messages')
         .select('*')
         .order('created_at', { ascending: false })
