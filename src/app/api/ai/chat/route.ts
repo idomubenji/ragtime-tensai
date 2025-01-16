@@ -9,6 +9,7 @@ import { initializeLangchainTracing } from '@/utils/langchain/tracing';
 import { findSimilarMessagesSmall, getVectorTableName, type SimilaritySearchResult } from '@/utils/supabase/vectors';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import type { Message } from '@/utils/supabase/types';
+import { supabase } from '@/utils/supabase/client';
 
 // Initialize tracing for this route
 console.log('Initializing tracing in API route...');
@@ -83,12 +84,6 @@ export async function POST(request: NextRequest) {
     // Clean caches periodically (but don't block the request)
     setTimeout(cleanCaches, 0);
     
-
-    // Validate API key
-    if (!validateApiKey(request)) {
-      return getAuthErrorResponse();
-    }
-
     body = await request.json();
     const { 
       message, 
@@ -97,7 +92,7 @@ export async function POST(request: NextRequest) {
       matchThreshold = 0.5  // Default to 0.5 if not provided
     } = body;
 
-    // Validate environment
+    // Validate environment first
     try {
       validateEnvironment(environment);
     } catch (err) {
@@ -105,6 +100,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: err.message }, { status: 400 });
       }
       throw err;
+    }
+
+    // Then validate API key with the validated environment
+    if (!validateApiKey(request, environment)) {
+      return getAuthErrorResponse();
     }
 
     // Look up the mentioned user (with caching)
@@ -115,10 +115,10 @@ export async function POST(request: NextRequest) {
     });
     user = await getCachedUser(mentionedUsername);
     if (!user) {
-      return NextResponse.json(
-        { error: `User ${mentionedUsername} not found` },
-        { status: 404 }
-      );
+      console.log('User not found, falling back to all users:', {
+        mentionedUsername,
+        environment
+      });
     }
 
     console.log('User lookup result:', {
@@ -127,29 +127,45 @@ export async function POST(request: NextRequest) {
       userName: user?.name
     });
     
+    // Get messages from specified user or all users
+    console.log('Fetching messages:', {
+      userId: user?.id,
+      environment,
+      mode: user ? 'single user' : 'all users'
+    });
+
     if (user) {
-      // Only try to get user messages if we found the user
-      console.log('Fetching user messages:', {
-        userId: user.id,
-        environment
-      });
       userMessages = await getUserMessages(user.id).catch(err => {
         console.error('Failed to get user messages:', err);
         return []; // Return empty array to allow fallback behavior
       });
+    } else {
+      // Fetch messages from all users when no specific user found
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-      if (userMessages.length === 0) {
-        return NextResponse.json(
-          { error: `No messages found for user ${user.name}` },
-          { status: 404 }
-        );
+      if (error) {
+        console.error('Failed to get messages:', error);
+        userMessages = [];
+      } else {
+        userMessages = data;
       }
-
-      console.log('User messages result:', {
-        count: userMessages.length,
-        messageIds: userMessages.map(m => m.id)
-      });
     }
+
+    if (userMessages.length === 0) {
+      return NextResponse.json(
+        { error: 'No messages found in the database' },
+        { status: 404 }
+      );
+    }
+
+    console.log('Messages result:', {
+      count: userMessages.length,
+      messageIds: userMessages.map(m => m.id)
+    });
 
     // Get message embedding
     console.log('Generating message embedding:', {
