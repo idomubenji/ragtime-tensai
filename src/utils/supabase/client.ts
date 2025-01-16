@@ -1,15 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { Database } from './types';
 
-// Use production URLs and keys by default for the global client
+// Always use production URL and service role key
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL_PROD) {
   throw new Error('Missing environment variable: NEXT_PUBLIC_SUPABASE_URL_PROD');
 }
 
-// Use service role key for tests and development
-const supabaseKey = process.env.NODE_ENV === 'production'
-  ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_PROD
-  : process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseKey) {
   throw new Error('Missing Supabase key');
@@ -18,7 +15,6 @@ if (!supabaseKey) {
 console.log('Creating default Supabase client:', {
   hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL_PROD,
   hasKey: !!supabaseKey,
-  nodeEnv: process.env.NODE_ENV,
   url: process.env.NEXT_PUBLIC_SUPABASE_URL_PROD?.substring(0, 10) + '...'
 });
 

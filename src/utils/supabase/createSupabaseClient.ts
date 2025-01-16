@@ -15,6 +15,12 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
       throw new Error('Missing required Vector Supabase environment variables');
     }
 
+    console.log('Creating vector client:', {
+      hasUrl: !!process.env.VECTOR_SUPABASE_URL,
+      hasKey: !!process.env.VECTOR_SUPABASE_SERVICE_KEY,
+      url: process.env.VECTOR_SUPABASE_URL?.substring(0, 10) + '...'
+    });
+
     return createClient<Database>(
       process.env.VECTOR_SUPABASE_URL,
       process.env.VECTOR_SUPABASE_SERVICE_KEY,
@@ -25,24 +31,25 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
       }
     );
   } else {
-    // For regular operations, use environment-specific credentials
-    const url = environment === 'development' 
-      ? process.env.NEXT_PUBLIC_SUPABASE_URL_DEV 
-      : process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
-    
-    const key = environment === 'development'
-      ? process.env.SUPABASE_SERVICE_ROLE_KEY
-      : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_PROD;
+    // Always use production URL since we're on Vercel
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!url || !key) {
-      throw new Error(`Missing required Supabase environment variables for ${environment} environment`);
+      console.error('Missing Supabase credentials:', {
+        hasUrl: !!url,
+        hasKey: !!key,
+        type
+      });
+      throw new Error('Missing required Supabase environment variables');
     }
 
     console.log('Creating Supabase client:', {
       environment,
+      type,
       hasUrl: !!url,
       hasKey: !!key,
-      url: url.substring(0, 10) + '...' // Log part of URL for debugging
+      url: url.substring(0, 10) + '...'
     });
 
     return createClient<Database>(

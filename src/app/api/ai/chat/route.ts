@@ -289,11 +289,22 @@ export async function POST(request: NextRequest) {
       body,
       user,
       userMessagesCount: userMessages.length,
+      environmentVars: {
+        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+        hasVectorUrl: !!process.env.VECTOR_SUPABASE_URL,
+        hasVectorKey: !!process.env.VECTOR_SUPABASE_SERVICE_KEY,
+        hasVectorTable: !!process.env.VECTOR_TABLE_NAME,
+        environment: body?.environment,
+      }
     });
     
-    // Generic error handling
+    // Return the actual error message in development
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? err instanceof Error ? err.message : String(err)
+      : 'Internal server error';
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

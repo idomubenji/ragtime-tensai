@@ -5,21 +5,18 @@ const API_KEY_HEADER = 'x-tensai-key';
 
 export function validateApiKey(request: NextRequest, environment: Environment = 'development'): boolean {
   const apiKey = request.headers.get(API_KEY_HEADER);
-  const validDevKey = process.env.NEXT_PUBLIC_TENSAI_KEY;
-  const validProdKey = process.env.TENSAI_KEY;
+  const validKey = process.env.TENSAI_KEY;
 
-  if (!validDevKey || !validProdKey) {
-    console.error('Missing required Tensai API key environment variables');
+  if (!validKey) {
+    console.error('Missing required Tensai API key environment variable');
     return false;
   }
 
-  const expectedKey = environment === 'development' ? validDevKey : validProdKey;
-  const isValid = apiKey === expectedKey;
+  const isValid = apiKey === validKey;
 
   console.log('API key validation result:', {
     headerUsed: API_KEY_HEADER,
     keyProvided: !!apiKey,
-    environment,
     isValid
   });
 
