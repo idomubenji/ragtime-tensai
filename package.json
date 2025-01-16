@@ -2,35 +2,49 @@
   "name": "ragtime-tensai",
   "version": "1.0.0",
   "description": "AI chat bot that responds as users from the database",
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
-    "clear-pinecone": "ts-node scripts/clear-pinecone.ts"
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "sync-messages": "ts-node scripts/sync-messages.ts",
+    "sync-messages:watch": "nodemon scripts/sync-messages.ts",
+    "sync-messages:prod": "NODE_ENV=production ts-node scripts/sync-messages.ts",
+    "sync-messages:prod:watch": "NODE_ENV=production nodemon scripts/sync-messages.ts",
+    "vector:verify": "NODE_ENV=development tsx scripts/verify-vector-db.ts",
+    "vector:setup": "NODE_ENV=development tsx scripts/run-vector-migrations.ts",
+    "vector:test": "NODE_ENV=development tsx scripts/test-vector-search.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@pinecone-database/pinecone": "^1.1.2",
-    "@supabase/supabase-js": "^2.47.12",
-    "@types/node": "^20.10.6",
-    "@types/node-cron": "^3.0.11",
-    "@types/react": "^18.2.46",
-    "@types/react-dom": "^18.2.18",
+    "@langchain/openai": "^0.0.10",
+    "@supabase/auth-helpers-nextjs": "^0.8.7",
+    "@supabase/supabase-js": "^2.39.1",
     "langchain": "^0.0.212",
-    "next": "^14.0.4",
+    "next": "14.0.4",
     "node-cron": "^3.0.3",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "typescript": "^5.3.3"
+    "react": "^18",
+    "react-dom": "^18",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.10",
+    "@types/react": "19.0.7",
     "dotenv": "^16.4.7",
     "jest": "^29.7.0",
-    "ts-jest": "^29.2.5"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2"
   }
 }

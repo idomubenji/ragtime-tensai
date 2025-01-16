@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  tensai-vectors-db:
+    image: pgvector/pgvector:pg15
+    ports:
+      - '54325:5432'
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - tensai-vectors-data:/var/lib/postgresql/data
+
+volumes:
+  tensai-vectors-data: 

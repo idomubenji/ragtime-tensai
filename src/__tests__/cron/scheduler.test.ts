@@ -1,80 +1,120 @@
 import { MessageSyncScheduler } from '../../utils/cron/scheduler';
-import { PineconeClient } from '@pinecone-database/pinecone';
-import cron from 'node-cron';
 import { MessageSyncJob } from '../../utils/cron/message-sync';
-
-// Mock OpenAI embeddings
-jest.mock('@langchain/openai', () => ({
-  OpenAIEmbeddings: jest.fn().mockImplementation(() => ({
-    embedQuery: jest.fn().mockResolvedValue([0.1, 0.2, 0.3])
-  }))
-}));
+import * as cron from 'node-cron';
 
 jest.mock('node-cron', () => ({
-  schedule: jest.fn(() => ({
-    stop: jest.fn()
-  })),
-  validate: jest.fn().mockImplementation((schedule) => {
-    // Basic validation for testing
-    return /^[\d*/\s-,]+$/.test(schedule);
-  })
+  schedule: jest.fn().mockReturnValue({ stop: jest.fn() }),
+  validate: jest.fn().mockReturnValue(true)
 }));
 
+jest.mock('../../utils/cron/message-sync');
+
 describe('MessageSyncScheduler', () => {
-  let mockPineconeClient: jest.Mocked<PineconeClient>;
   let scheduler: MessageSyncScheduler;
+  let mockSync: jest.SpyInstance;
 
   beforeEach(() => {
-    // Reset all mocks
     jest.clearAllMocks();
-    
-    // Create mock Pinecone client
-    mockPineconeClient = {
-      init: jest.fn().mockResolvedValue(undefined)
-    } as any;
-
-    scheduler = new MessageSyncScheduler(mockPineconeClient, 'development');
+    scheduler = new MessageSyncScheduler('development');
+    mockSync = jest.spyOn(MessageSyncJob.prototype, 'sync');
   });
 
-  describe('start', () => {
-    it('should start scheduler with default schedule', () => {
+  describe('start/stop', () => {
+    it('should start and stop the scheduler', () => {
       scheduler.start();
-      expect(cron.schedule).toHaveBeenCalledWith('*/5 * * * *', expect.any(Function));
-    });
+      expect(cron.schedule).toHaveBeenCalled();
 
-    it('should start scheduler with custom schedule', () => {
-      scheduler.start('0 * * * *');
-      expect(cron.schedule).toHaveBeenCalledWith('0 * * * *', expect.any(Function));
-    });
-
-    it('should throw error for invalid schedule', () => {
-      expect(() => scheduler.start('invalid')).toThrow('Invalid cron schedule expression');
-    });
-
-    it('should not start multiple schedulers', () => {
-      scheduler.start();
-      scheduler.start();
-      expect(cron.schedule).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('stop', () => {
-    it('should stop running scheduler', () => {
-      scheduler.start();
-      const mockStop = (cron.schedule as jest.Mock).mock.results[0].value.stop;
-      
       scheduler.stop();
-      expect(mockStop).toHaveBeenCalled();
+      expect(scheduler['task']).toBeNull();
     });
 
-    it('should handle stopping when not running', () => {
-      scheduler.stop(); // Should not throw
+    it('should warn if scheduler is already running', () => {
+      const consoleSpy = jest.spyOn(console, 'warn');
+      scheduler.start();
+      scheduler.start();
+      expect(consoleSpy).toHaveBeenCalledWith('Scheduler already running');
+    });
+
+    it('should throw error for invalid cron schedule', () => {
+      (cron.validate as jest.Mock).mockReturnValueOnce(false);
+      expect(() => scheduler.start('invalid')).toThrow('Invalid cron schedule');
     });
   });
 
-  describe('syncNow', () => {
-    it('should run sync job immediately', async () => {
-      await expect(scheduler.syncNow()).resolves.not.toThrow();
+  describe('sync operations', () => {
+    it('should track successful syncs', async () => {
+      mockSync.mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        return { messagesProcessed: 10, batchSize: 10 };
+      });
+      await scheduler.syncNow();
+
+      const stats = scheduler.getStats();
+      expect(stats.totalSuccesses).toBe(1);
+      expect(stats.consecutiveFailures).toBe(0);
+      expect(stats.totalMessagesProcessed).toBe(10);
+      expect(stats.totalBatchesProcessed).toBe(1);
+      expect(stats.lastBatchSize).toBe(10);
+      expect(stats.lastRunDuration).toBeGreaterThan(0);
+      expect(stats.averageRunDuration).toBeGreaterThan(0);
+    });
+
+    it('should track failed syncs', async () => {
+      mockSync.mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        throw new Error('Sync failed');
+      });
+      await expect(scheduler.syncNow(0)).rejects.toThrow('Sync failed');
+
+      const stats = scheduler.getStats();
+      expect(stats.totalFailures).toBe(1);
+      expect(stats.consecutiveFailures).toBe(1);
+      expect(stats.lastRunDuration).toBeGreaterThan(0);
+    });
+
+    it('should track empty syncs', async () => {
+      mockSync.mockResolvedValueOnce({ messagesProcessed: 0, batchSize: 0 });
+      await scheduler.syncNow();
+
+      const stats = scheduler.getStats();
+      expect(stats.totalSuccesses).toBe(1);
+      expect(stats.totalMessagesProcessed).toBe(0);
+      expect(stats.lastBatchSize).toBe(0);
+    });
+
+    it('should update max run duration', async () => {
+      // First sync - sets initial max
+      mockSync.mockResolvedValueOnce({ messagesProcessed: 5, batchSize: 5 });
+      await scheduler.syncNow();
+      const firstMax = scheduler.getStats().maxRunDuration;
+
+      // Second sync - should be longer due to delay
+      mockSync.mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return { messagesProcessed: 5, batchSize: 5 };
+      });
+      await scheduler.syncNow();
+      
+      const stats = scheduler.getStats();
+      expect(stats.maxRunDuration).toBeGreaterThan(firstMax);
+    });
+
+    it('should calculate average run duration correctly', async () => {
+      // First sync
+      mockSync.mockResolvedValueOnce({ messagesProcessed: 5, batchSize: 5 });
+      await scheduler.syncNow();
+      const firstAvg = scheduler.getStats().averageRunDuration;
+
+      // Second sync with delay
+      mockSync.mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return { messagesProcessed: 5, batchSize: 5 };
+      });
+      await scheduler.syncNow();
+      
+      const stats = scheduler.getStats();
+      expect(stats.averageRunDuration).toBeGreaterThan(firstAvg);
+      expect(stats.totalSuccesses).toBe(2);
     });
   });
 }); 

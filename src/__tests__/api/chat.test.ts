@@ -1,13 +1,37 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/ai/chat/route';
 import { lookupUserByUsername, getUserMessages } from '@/utils/supabase/users';
 import { generateResponse } from '@/utils/langchain/response';
 import { createSupabaseClient } from '@/utils/supabase/createSupabaseClient';
+import { findSimilarMessages } from '@/utils/supabase/vectors';
+import { OpenAIEmbeddings } from '@langchain/openai';
+import { validateApiKey } from '@/utils/auth/api-auth';
+import { validateEnvironment, EnvironmentError } from '@/utils/supabase/environment';
+import { NextResponse } from 'next/server';
 
 // Mock dependencies
 jest.mock('@/utils/supabase/users');
 jest.mock('@/utils/langchain/response');
 jest.mock('@/utils/supabase/createSupabaseClient');
+jest.mock('@/utils/supabase/vectors');
+jest.mock('@langchain/openai');
+jest.mock('@/utils/auth/api-auth', () => ({
+  validateApiKey: jest.fn((req) => req.headers.get('x-api-key') === process.env.TENSAI_KEY),
+  getAuthErrorResponse: jest.fn(() => NextResponse.json(
+    { error: 'Unauthorized - Invalid or missing API key' },
+    { status: 401 }
+  ))
+}));
+jest.mock('@/utils/supabase/environment', () => ({
+  validateEnvironment: jest.fn(),
+  EnvironmentError: class EnvironmentError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'EnvironmentError';
+    }
+  },
+  getEnvironmentVariable: jest.fn((name, defaultValue) => defaultValue || '')
+}));
 
 describe('Chat API', () => {
   const mockUser = {
@@ -27,88 +51,64 @@ describe('Chat API', () => {
     },
   ];
 
+  const mockSimilarMessages = [
+    {
+      message_id: 'msg1',
+      content: 'Hello world!',
+      user_id: 'user123',
+    },
+  ];
+
   beforeEach(() => {
+    // Reset mocks
     jest.clearAllMocks();
-  });
 
-  it('should return default TENSAI BOT response when no username is mentioned', async () => {
-    const request = new NextRequest('http://localhost:3000/api/ai/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': 'test-tensai-key'
-      },
-      body: JSON.stringify({
-        message: 'Hello!',
-      })
+    // Mock environment variables
+    process.env = {
+      ...process.env,
+      TENSAI_KEY: 'test-key'
+    };
+
+    // Mock API key validation
+    (validateApiKey as jest.Mock).mockImplementation((req) => {
+      return req.headers.get('x-api-key') === process.env.TENSAI_KEY;
     });
 
-    const response = await POST(request);
-    const data = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(data).toEqual({
-      content: 'Hello!',
-      username: 'TENSAI BOT',
-      avatarUrl: null,
-    });
-  });
-
-  it('should return 404 when user is not found', async () => {
-    // Mock Supabase client for user not found
-    (createSupabaseClient as jest.Mock).mockReturnValue({
-      from: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null })
-      })
+    // Mock environment validation
+    (validateEnvironment as jest.Mock).mockImplementation((env) => {
+      if (env !== 'development' && env !== 'production') {
+        const error = new EnvironmentError(`Invalid environment: ${env}`);
+        error.name = 'EnvironmentError';
+        throw error;
+      }
     });
 
-    const request = new NextRequest('http://localhost:3000/api/ai/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': 'test-tensai-key'
-      },
-      body: JSON.stringify({
-        message: 'Hello!',
-        mentionedUsername: 'nonexistent'
-      })
-    });
-
-    const response = await POST(request);
-    expect(response.status).toBe(404);
-    const data = await response.json();
-    expect(data.error).toBe('User not found');
-  });
-
-  it('should generate response for valid user', async () => {
-    // Mock Supabase client for successful user lookup
-    (createSupabaseClient as jest.Mock).mockReturnValue({
-      from: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({ data: mockUser, error: null })
-      })
-    });
-
-    // Mock message retrieval
+    // Mock user lookup
+    (lookupUserByUsername as jest.Mock).mockResolvedValue(mockUser);
     (getUserMessages as jest.Mock).mockResolvedValue(mockMessages);
-    (generateResponse as jest.Mock).mockResolvedValue('AI generated response');
+    (generateResponse as jest.Mock).mockResolvedValue('AI response');
+    (findSimilarMessages as jest.Mock).mockResolvedValue(mockSimilarMessages);
+    (OpenAIEmbeddings as jest.Mock).mockImplementation(() => ({
+      embedQuery: jest.fn().mockResolvedValue(new Array(1536).fill(0.1))
+    }));
+  });
 
-    const request = new NextRequest('http://localhost:3000/api/ai/chat', {
+  afterEach(() => {
+    // Clean up environment variables
+    delete process.env.TENSAI_KEY;
+  });
+
+  it('should generate chat response', async () => {
+    const request = new NextRequest('http://localhost/api/ai/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': 'test-tensai-key'
+        'X-API-Key': 'test-key'
       },
       body: JSON.stringify({
-        message: 'Hello!',
-        mentionedUsername: 'testuser'
+        message: 'Hello',
+        mentionedUsername: 'Test User',
+        environment: 'development'
       })
     });
 
@@ -117,42 +117,122 @@ describe('Chat API', () => {
 
     expect(response.status).toBe(200);
     expect(data).toEqual({
-      content: 'AI generated response',
-      username: `FAKE ${mockUser.name}`,
-      avatarUrl: mockUser.avatar_url,
+      content: 'AI response',
+      username: 'FAKE Test User',
+      avatarUrl: 'https://example.com/avatar.jpg'
     });
+
+    // Verify user lookup
+    expect(lookupUserByUsername).toHaveBeenCalledWith('Test User');
+
+    // Verify message retrieval
+    expect(getUserMessages).toHaveBeenCalledWith('user123');
+
+    // Verify response generation
+    expect(generateResponse).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Hello',
+      username: 'Test User',
+      userMessages: expect.arrayContaining([
+        expect.objectContaining({
+          content: 'Hello world!'
+        })
+      ])
+    }));
   });
 
-  it('should handle errors gracefully', async () => {
-    // Mock Supabase client to throw error
-    (createSupabaseClient as jest.Mock).mockReturnValue({
-      from: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnThis(),
-        eq: jest.fn().mockReturnThis(),
-        order: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { message: 'Database error' }
-        })
-      })
-    });
+  it('should handle missing user', async () => {
+    (lookupUserByUsername as jest.Mock).mockResolvedValue(null);
 
-    const request = new NextRequest('http://localhost:3000/api/ai/chat', {
+    const request = new NextRequest('http://localhost/api/ai/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': 'test-tensai-key'
+        'X-API-Key': 'test-key'
       },
       body: JSON.stringify({
-        message: 'Hello!',
-        mentionedUsername: 'testuser'
+        message: 'Hello',
+        mentionedUsername: 'NonexistentUser',
+        environment: 'development'
       })
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(500);
     const data = await response.json();
-    expect(data.error).toBe('Database error');
+
+    expect(response.status).toBe(404);
+    expect(data).toEqual({
+      error: 'User NonexistentUser not found'
+    });
+  });
+
+  it('should handle missing messages', async () => {
+    (getUserMessages as jest.Mock).mockResolvedValue([]);
+
+    const request = new NextRequest('http://localhost/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': 'test-key'
+      },
+      body: JSON.stringify({
+        message: 'Hello',
+        mentionedUsername: 'Test User',
+        environment: 'development'
+      })
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(data).toEqual({
+      error: 'No messages found for user Test User'
+    });
+  });
+
+  it('should handle invalid environment', async () => {
+    const request = new NextRequest('http://localhost/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': 'test-key'
+      },
+      body: JSON.stringify({
+        message: 'Hello',
+        mentionedUsername: 'Test User',
+        environment: 'invalid'
+      })
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data).toEqual({
+      error: 'Invalid environment: invalid'
+    });
+  });
+
+  it('should handle invalid API key', async () => {
+    const request = new NextRequest('http://localhost/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': 'invalid-key'
+      },
+      body: JSON.stringify({
+        message: 'Hello',
+        mentionedUsername: 'Test User',
+        environment: 'development'
+      })
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({
+      error: expect.stringContaining('Unauthorized')
+    });
   });
 }); 

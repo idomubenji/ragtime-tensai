@@ -1,123 +1,149 @@
 import { MessageSyncJob } from '@/utils/cron/message-sync';
-import { PineconeClient } from '@pinecone-database/pinecone';
-import { vectorizeMessage } from '@/utils/pinecone/messages';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '@/utils/supabase/createSupabaseClient';
+import { generateBatchMessageEmbeddings } from '@/utils/embeddings';
 
 // Mock dependencies
-jest.mock('@/utils/pinecone/messages');
-jest.mock('@pinecone-database/pinecone');
 jest.mock('@/utils/supabase/createSupabaseClient');
+jest.mock('@/utils/embeddings');
 
 describe('MessageSyncJob', () => {
-  // Create mock index
-  const mockIndex = {
-    query: jest.fn(),
-    upsert: jest.fn()
-  };
-
-  // Create a properly typed mock PineconeClient
-  const mockPineconeClient = {
-    apiKey: 'test-key',
-    projectName: 'test-project',
-    environment: 'test-env',
-    init: jest.fn().mockResolvedValue(undefined),
-    Index: jest.fn().mockReturnValue(mockIndex),
-    withMiddleware: jest.fn(),
-    configureIndex: jest.fn(),
-    configureIndexRaw: jest.fn(),
-    createCollection: jest.fn(),
-    createCollectionRaw: jest.fn(),
-    createIndex: jest.fn(),
-    createIndexRaw: jest.fn(),
-    deleteCollection: jest.fn(),
-    deleteCollectionRaw: jest.fn(),
-    deleteIndex: jest.fn(),
-    deleteIndexRaw: jest.fn(),
-    describeCollection: jest.fn(),
-    describeCollectionRaw: jest.fn(),
-    describeIndex: jest.fn(),
-    describeIndexRaw: jest.fn(),
-    describeIndexStats: jest.fn(),
-    describeIndexStatsRaw: jest.fn(),
-    listCollections: jest.fn(),
-    listCollectionsRaw: jest.fn(),
-    listIndexes: jest.fn(),
-    listIndexesRaw: jest.fn(),
-    withApiKey: jest.fn(),
-    withEnvironment: jest.fn(),
-    withPostMiddleware: jest.fn(),
-    withPreMiddleware: jest.fn(),
-    withProjectName: jest.fn()
-  } as unknown as jest.Mocked<PineconeClient>;
-
-  // Mock Supabase client
-  const mockSupabaseClient = {
-    from: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      gt: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      order: jest.fn().mockReturnThis(),
-      single: jest.fn()
-    })
-  };
+  let mockSupabaseClient: jest.Mocked<SupabaseClient>;
+  let syncJob: MessageSyncJob;
 
   beforeEach(() => {
+    // Reset mocks
     jest.clearAllMocks();
-    (PineconeClient as jest.MockedClass<typeof PineconeClient>).mockImplementation(() => mockPineconeClient);
+
+    // Create mock Supabase client
+    mockSupabaseClient = {
+      from: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        gt: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockResolvedValue({
+          data: [],
+          error: null
+        }),
+        insert: jest.fn().mockResolvedValue({ error: null })
+      }),
+      rpc: jest.fn().mockResolvedValue({ error: null })
+    } as unknown as jest.Mocked<SupabaseClient>;
+
     (createSupabaseClient as jest.Mock).mockReturnValue(mockSupabaseClient);
-    
-    // Mock successful vectorization by default
-    (vectorizeMessage as jest.Mock).mockResolvedValue(true);
+    (generateBatchMessageEmbeddings as jest.Mock).mockResolvedValue([]);
+
+    syncJob = new MessageSyncJob('development');
   });
 
-  it('should sync messages successfully', async () => {
-    // Mock messages from database
-    const mockMessages = [{
-      id: 'msg1',
-      content: 'Hello world',
-      user_id: 'user1',
-      created_at: new Date().toISOString()
-    }];
+  describe('sync', () => {
+    it('should sync messages successfully', async () => {
+      const mockMessages = [
+        {
+          id: '1',
+          user_id: 'user1',
+          content: 'Test message 1',
+          created_at: '2024-01-01T00:00:00Z'
+        },
+        {
+          id: '2',
+          user_id: 'user2',
+          content: 'Test message 2',
+          created_at: '2024-01-01T00:00:01Z'
+        }
+      ];
 
-    // Mock successful database queries
-    mockSupabaseClient.from().select().gt().order.mockResolvedValue({
-      data: mockMessages,
-      error: null
+      const mockEmbeddings = [
+        {
+          message_id: '1',
+          user_id: 'user1',
+          content_embedding: Array(3072).fill(0.1),
+          content_embedding_small: Array(1056).fill(0.1)
+        },
+        {
+          message_id: '2',
+          user_id: 'user2',
+          content_embedding: Array(3072).fill(0.1),
+          content_embedding_small: Array(1056).fill(0.1)
+        }
+      ];
+
+      mockSupabaseClient.from = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        gt: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockResolvedValue({
+          data: mockMessages,
+          error: null
+        }),
+        insert: jest.fn().mockResolvedValue({ error: null })
+      });
+
+      (generateBatchMessageEmbeddings as jest.Mock).mockResolvedValue(mockEmbeddings);
+
+      await syncJob.sync();
+
+      // Verify messages were fetched
+      expect(mockSupabaseClient.from).toHaveBeenCalledWith('messages');
+
+      // Verify transaction was started
+      expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('vector_store.begin_transaction');
+
+      // Verify embeddings were generated
+      expect(generateBatchMessageEmbeddings).toHaveBeenCalledWith(
+        mockMessages.map(msg => ({
+          id: msg.id,
+          user_id: msg.user_id,
+          content: msg.content
+        }))
+      );
+
+      // Verify embeddings were stored
+      expect(mockSupabaseClient.from).toHaveBeenCalledWith('vector_store.message_embeddings_dev');
+      expect(mockSupabaseClient.from('vector_store.message_embeddings_dev').insert).toHaveBeenCalledWith(mockEmbeddings);
     });
 
-    mockSupabaseClient.from().select().eq().single.mockResolvedValue({
-      data: { name: 'testuser' },
-      error: null
+    it('should handle empty message list', async () => {
+      await syncJob.sync();
+
+      // Verify no embeddings were generated or stored
+      expect(generateBatchMessageEmbeddings).not.toHaveBeenCalled();
+      expect(mockSupabaseClient.from).not.toHaveBeenCalledWith('vector_store.message_embeddings_dev');
     });
 
-    const syncJob = new MessageSyncJob(mockPineconeClient, 'development');
-    await syncJob.syncMessages();
+    it('should handle database errors', async () => {
+      const mockMessages = [{
+        id: '1',
+        user_id: 'user1',
+        content: 'Test message',
+        created_at: '2024-01-01T00:00:00Z'
+      }];
 
-    // Should attempt to vectorize with both models
-    expect(vectorizeMessage).toHaveBeenCalledTimes(2);
-    expect(vectorizeMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'msg1' }),
-      false,
-      'development'
-    );
-    expect(vectorizeMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'msg1' }),
-      true,
-      'development'
-    );
+      mockSupabaseClient.from = jest.fn()
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          gt: jest.fn().mockReturnThis(),
+          order: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockResolvedValue({
+            data: mockMessages,
+            error: null
+          })
+        })
+        .mockReturnValueOnce({
+          insert: jest.fn().mockResolvedValue({
+            error: new Error('Database error')
+          })
+        });
+
+      await expect(syncJob.sync()).rejects.toThrow();
+    });
   });
 
-  it('should handle errors gracefully', async () => {
-    // Mock database error
-    mockSupabaseClient.from().select().gt().order.mockResolvedValue({
-      data: null,
-      error: new Error('Database error')
+  describe('sync state', () => {
+    it('should maintain sync state', () => {
+      const state = { lastSyncTimestamp: '2024-01-01T00:00:00Z' };
+      syncJob.setSyncState(state);
+      expect(syncJob.getSyncState()).toEqual(state);
     });
-
-    const syncJob = new MessageSyncJob(mockPineconeClient, 'development');
-    await expect(syncJob.syncMessages()).rejects.toThrow('Database error');
-
-    // Should not attempt to vectorize anything
-    expect(vectorizeMessage).not.toHaveBeenCalled();
   });
 }); 

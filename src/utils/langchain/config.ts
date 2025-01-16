@@ -2,6 +2,11 @@ import { ChatOpenAI } from 'langchain/chat_models/openai';
 import { PromptTemplate } from 'langchain/prompts';
 import { LLMChain } from 'langchain/chains';
 import { Message } from '../supabase/types';
+import { initializeLangchainTracing, getLangchainProject } from './tracing';
+
+// Initialize tracing
+console.log('Initializing tracing in config...');
+initializeLangchainTracing();
 
 // Types for our chat system
 export interface ChatInput {
@@ -13,6 +18,7 @@ export interface ChatInput {
 
 // Initialize the OpenAI chat model
 export function createChatModel(temperature = 0.7) {
+  console.log('Creating chat model with tracing:', process.env.LANGCHAIN_TRACING);
   return new ChatOpenAI({
     modelName: 'gpt-4-turbo-preview',
     temperature,
@@ -43,10 +49,23 @@ export const userStylePrompt = new PromptTemplate({
 
 // Create a chain for generating responses
 export async function createResponseChain(input: ChatInput) {
+  console.log('Creating response chain...');
   const model = createChatModel(input.temperature);
   const chain = new LLMChain({
     llm: model,
     prompt: userStylePrompt,
+    // Add tracing configuration
+    verbose: process.env.LANGSMITH_TRACING === 'true',
+    tags: ['user-style-response'],
+    metadata: {
+      username: input.username,
+      project: getLangchainProject(),
+    },
+  });
+
+  console.log('Chain created with tracing config:', {
+    verbose: process.env.LANGSMITH_TRACING === 'true',
+    project: getLangchainProject(),
   });
 
   const messageHistory = input.userMessages

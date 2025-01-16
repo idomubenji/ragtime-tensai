@@ -1,37 +1,38 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { PineconeClient } from '@pinecone-database/pinecone';
+import { validateEnvironment } from '@/utils/supabase/environment';
 import { MessageSyncJob } from '@/utils/cron/message-sync';
-
-// Initialize Pinecone client
-const pineconeClient = new PineconeClient();
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   try {
-    // Verify cron secret
-    const cronSecret = req.headers['x-cron-secret'];
-    if (cronSecret !== process.env.CRON_SECRET) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    // Get environment from query params
+    const environment = (req.query.environment as string) || 'development';
 
-    // Initialize Pinecone
-    await pineconeClient.init({
-      apiKey: process.env.PINECONE_API_KEY!,
-      environment: process.env.PINECONE_ENVIRONMENT!
+    // Validate environment
+    validateEnvironment(environment);
+
+    // Initialize and run sync job
+    const syncJob = new MessageSyncJob(environment);
+    const result = await syncJob.sync();
+
+    return res.status(200).json({ 
+      success: true,
+      state: syncJob.getSyncState(),
+      result
     });
-
-    // Get current environment
-    const environment = process.env.NODE_ENV === 'production' ? 'production' : 'development';
-
-    // Create and run sync job
-    const syncJob = new MessageSyncJob(pineconeClient, environment);
-    await syncJob.syncMessages();
-
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error in message sync:', error);
-    res.status(500).json({ error: 'Failed to sync messages' });
+  } catch (error: any) {
+    console.error('Error in sync job:', error);
+    // Return more detailed error information in development
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? `${error?.message || 'Unknown error'}\n${error?.stack || ''}`
+      : 'Internal server error';
+      
+    return res.status(500).json({ error: errorMessage });
   }
 } 

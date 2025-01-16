@@ -1,6 +1,6 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-const API_KEY_HEADER = 'X-API-Key';
+const API_KEY_HEADER = 'x-tensai-key';
 
 export function validateApiKey(request: NextRequest): boolean {
   const apiKey = request.headers.get(API_KEY_HEADER);
@@ -11,17 +11,19 @@ export function validateApiKey(request: NextRequest): boolean {
     return false;
   }
 
-  return apiKey === validApiKey;
+  const isValid = apiKey === validApiKey;
+  console.log('API key validation result:', {
+    headerUsed: API_KEY_HEADER,
+    keyProvided: !!apiKey,
+    isValid
+  });
+
+  return isValid;
 }
 
 export function getAuthErrorResponse() {
-  return new Response(
-    JSON.stringify({ error: 'Unauthorized - Invalid or missing API key' }),
-    {
-      status: 401,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    }
+  return NextResponse.json(
+    { error: 'Unauthorized - Invalid or missing API key' },
+    { status: 401 }
   );
 } 

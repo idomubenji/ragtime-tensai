@@ -71,12 +71,53 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      vector_begin_transaction: {
+        Args: Record<string, never>;
+        Returns: void;
+      };
+      vector_commit_transaction: {
+        Args: Record<string, never>;
+        Returns: void;
+      };
+      vector_rollback_transaction: {
+        Args: Record<string, never>;
+        Returns: void;
+      };
     };
     Enums: {
       user_status: UserStatus;
       user_role: UserRole;
       channel_role: ChannelRole;
+    };
+  };
+  vector_store: {
+    Tables: {
+      message_embeddings_dev: {
+        Row: {
+          id: string;
+          message_id: string;
+          user_id: string;
+          content_embedding: number[];
+          content_embedding_small: number[];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['vector_store']['Tables']['message_embeddings_dev']['Row'], 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Database['vector_store']['Tables']['message_embeddings_dev']['Insert']>;
+      };
+      message_embeddings_prod: {
+        Row: {
+          id: string;
+          message_id: string;
+          user_id: string;
+          content_embedding: number[];
+          content_embedding_small: number[];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['vector_store']['Tables']['message_embeddings_prod']['Row'], 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Database['vector_store']['Tables']['message_embeddings_prod']['Insert']>;
+      };
     };
   };
 };

@@ -15,6 +15,8 @@ export async function generateResponse({
   temperature = 0.7,
 }: GenerateResponseOptions): Promise<string> {
   try {
+    console.log('Generating response with LLM for:', { message, username });
+    
     const input: ChatInput = {
       currentMessage: message,
       username,
@@ -22,7 +24,10 @@ export async function generateResponse({
       temperature,
     };
 
+    console.log('Creating response chain with input:', input);
     const response = await createResponseChain(input);
+    console.log('Got LLM response:', response);
+    
     return response.text;
   } catch (error) {
     console.error('Error generating response:', error);
