@@ -4,7 +4,7 @@
     "schedule": "0 0 * * *"
   }],
   "framework": "nextjs",
-  "buildCommand": "npm run build:ci",
+  "buildCommand": "npm install && npm run build:ci",
   "outputDirectory": ".next",
   "headers": [
     {
@@ -36,5 +36,6 @@
       "CI": "1",
       "NEXT_TYPECHECK_STRICT": "true"
     }
-  }
+  },
+  "installCommand": "npm install"
 } 
