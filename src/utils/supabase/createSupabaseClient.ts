@@ -27,8 +27,8 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
   } else {
     // For regular operations, use environment-specific credentials
     const url = environment === 'development' 
-      ? process.env.SUPABASE_URL_DEV 
-      : process.env.SUPABASE_URL_PROD;
+      ? process.env.NEXT_PUBLIC_SUPABASE_URL_DEV 
+      : process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
     
     const key = environment === 'development'
       ? process.env.SUPABASE_KEY_DEV
@@ -37,6 +37,13 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
     if (!url || !key) {
       throw new Error(`Missing required Supabase environment variables for ${environment} environment`);
     }
+
+    console.log('Creating Supabase client:', {
+      environment,
+      hasUrl: !!url,
+      hasKey: !!key,
+      url: url.substring(0, 10) + '...' // Log part of URL for debugging
+    });
 
     return createClient<Database>(
       url,
