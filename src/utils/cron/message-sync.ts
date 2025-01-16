@@ -14,6 +14,7 @@ interface SyncState {
 interface SyncResult {
   messagesProcessed: number;
   totalBatches: number;
+  batchSize: number;
 }
 
 export class MessageSyncJob {
@@ -64,7 +65,8 @@ export class MessageSyncJob {
 
       return {
         messagesProcessed: totalProcessed,
-        totalBatches: batchCount
+        totalBatches: batchCount,
+        batchSize: this.BATCH_SIZE
       };
     } catch (error) {
       console.error('Error in sync operation:', error);

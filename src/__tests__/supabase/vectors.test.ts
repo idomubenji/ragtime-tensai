@@ -43,13 +43,13 @@ describe('Vector Store Operations', () => {
         message_id: '123',
         user_id: 'user1',
         content_embedding: new Array(3072).fill(0.1),
-        content_embedding_small: new Array(1056).fill(0.1)
+        content_embedding_small: new Array(1536).fill(0.1)
       }];
 
-      await storeMessageEmbeddings(mockClient, embeddings);
+      await storeMessageEmbeddings(mockClient, embeddings, 'development');
 
-      expect(mockClient.from).toHaveBeenCalledWith('vector_store.message_embeddings_dev');
-      expect(mockClient.from('vector_store.message_embeddings_dev').insert).toHaveBeenCalledWith(embeddings);
+      expect(mockClient.from).toHaveBeenCalledWith('message_embeddings_dev');
+      expect(mockClient.from('message_embeddings_dev').insert).toHaveBeenCalledWith(embeddings);
     });
 
     it('should throw error if storage fails', async () => {
@@ -70,10 +70,10 @@ describe('Vector Store Operations', () => {
         message_id: '123',
         user_id: 'user1',
         content_embedding: new Array(3072).fill(0.1),
-        content_embedding_small: new Array(1056).fill(0.1)
+        content_embedding_small: new Array(1536).fill(0.1)
       }];
 
-      await expect(storeMessageEmbeddings(mockClient, embeddings))
+      await expect(storeMessageEmbeddings(mockClient, embeddings, 'development'))
         .rejects.toThrow(mockError.message);
     });
   });
@@ -85,7 +85,7 @@ describe('Vector Store Operations', () => {
       await findSimilarMessages(mockClient, embedding, config);
 
       expect(mockClient.rpc).toHaveBeenCalledWith(
-        'vector_store.match_messages',
+        'match_messages',
         expect.objectContaining({
           query_embedding: embedding,
           match_threshold: config.matchThreshold,
@@ -96,12 +96,12 @@ describe('Vector Store Operations', () => {
     });
 
     it('should find similar messages using small embeddings', async () => {
-      const embedding = new Array(1056).fill(0.1);
+      const embedding = new Array(1536).fill(0.1);
       
       await findSimilarMessagesSmall(mockClient, embedding, config);
 
       expect(mockClient.rpc).toHaveBeenCalledWith(
-        'vector_store.match_messages_small',
+        'match_messages_small',
         expect.objectContaining({
           query_embedding: embedding,
           match_threshold: config.matchThreshold,

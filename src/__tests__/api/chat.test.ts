@@ -3,18 +3,47 @@ import { POST } from '@/app/api/ai/chat/route';
 import { lookupUserByUsername, getUserMessages } from '@/utils/supabase/users';
 import { generateResponse } from '@/utils/langchain/response';
 import { createSupabaseClient } from '@/utils/supabase/createSupabaseClient';
-import { findSimilarMessages } from '@/utils/supabase/vectors';
+import { findSimilarMessagesSmall } from '@/utils/supabase/vectors';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { validateApiKey } from '@/utils/auth/api-auth';
 import { validateEnvironment, EnvironmentError } from '@/utils/supabase/environment';
 import { NextResponse } from 'next/server';
 
 // Mock dependencies
+jest.mock('langchain/chat_models/openai', () => ({
+  ChatOpenAI: jest.fn().mockImplementation(() => ({
+    call: jest.fn().mockResolvedValue({ text: 'AI response' })
+  }))
+}));
+
+jest.mock('langchain/prompts', () => ({
+  PromptTemplate: jest.fn().mockImplementation(() => ({
+    format: jest.fn().mockResolvedValue('Formatted prompt')
+  }))
+}));
+
+jest.mock('langchain/chains', () => ({
+  LLMChain: jest.fn().mockImplementation(() => ({
+    call: jest.fn().mockResolvedValue({ text: 'AI response' })
+  }))
+}));
+
 jest.mock('@/utils/supabase/users');
 jest.mock('@/utils/langchain/response');
-jest.mock('@/utils/supabase/createSupabaseClient');
+jest.mock('@/utils/supabase/createSupabaseClient', () => ({
+  createSupabaseClient: jest.fn().mockReturnValue({})
+}));
 jest.mock('@/utils/supabase/vectors');
-jest.mock('@langchain/openai');
+jest.mock('@langchain/openai', () => ({
+  OpenAIEmbeddings: jest.fn().mockImplementation(() => ({
+    embedQuery: jest.fn().mockResolvedValue(new Array(1536).fill(0.1)),
+    client: {
+      embeddings: {
+        create: jest.fn().mockResolvedValue({ data: [{ embedding: new Array(1536).fill(0.1) }] })
+      }
+    }
+  }))
+}));
 jest.mock('@/utils/auth/api-auth', () => ({
   validateApiKey: jest.fn((req) => req.headers.get('x-api-key') === process.env.TENSAI_KEY),
   getAuthErrorResponse: jest.fn(() => NextResponse.json(
@@ -87,7 +116,7 @@ describe('Chat API', () => {
     (lookupUserByUsername as jest.Mock).mockResolvedValue(mockUser);
     (getUserMessages as jest.Mock).mockResolvedValue(mockMessages);
     (generateResponse as jest.Mock).mockResolvedValue('AI response');
-    (findSimilarMessages as jest.Mock).mockResolvedValue(mockSimilarMessages);
+    (findSimilarMessagesSmall as jest.Mock).mockResolvedValue(mockSimilarMessages);
     (OpenAIEmbeddings as jest.Mock).mockImplementation(() => ({
       embedQuery: jest.fn().mockResolvedValue(new Array(1536).fill(0.1))
     }));
@@ -114,6 +143,19 @@ describe('Chat API', () => {
 
     const response = await POST(request);
     const data = await response.json();
+    console.log('Test Response:', { 
+      status: response.status, 
+      data,
+      userMock: mockUser,
+      messagesMock: mockMessages,
+      similarMessagesMock: mockSimilarMessages,
+      mockCalls: {
+        lookupUser: (lookupUserByUsername as jest.Mock).mock.calls,
+        getMessages: (getUserMessages as jest.Mock).mock.calls,
+        generateResponse: (generateResponse as jest.Mock).mock.calls,
+        findSimilar: (findSimilarMessagesSmall as jest.Mock).mock.calls
+      }
+    });
 
     expect(response.status).toBe(200);
     expect(data).toEqual({
@@ -129,15 +171,16 @@ describe('Chat API', () => {
     expect(getUserMessages).toHaveBeenCalledWith('user123');
 
     // Verify response generation
-    expect(generateResponse).toHaveBeenCalledWith(expect.objectContaining({
+    expect(generateResponse).toHaveBeenCalledWith({
       message: 'Hello',
       username: 'Test User',
       userMessages: expect.arrayContaining([
         expect.objectContaining({
           content: 'Hello world!'
         })
-      ])
-    }));
+      ]),
+      temperature: 0.7
+    });
   });
 
   it('should handle missing user', async () => {

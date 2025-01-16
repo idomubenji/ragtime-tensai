@@ -75,17 +75,21 @@ async function getCachedEmbedding(message: string) {
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let error: Error | null = null;
+  let user = null;
+  let userMessages: Message[] = [];
+  let body: any;
 
   try {
     // Clean caches periodically (but don't block the request)
     setTimeout(cleanCaches, 0);
+    
 
     // Validate API key
     if (!validateApiKey(request)) {
       return getAuthErrorResponse();
     }
 
-    const body = await request.json();
+    body = await request.json();
     const { 
       message, 
       mentionedUsername, 
@@ -109,14 +113,19 @@ export async function POST(request: NextRequest) {
       environment,
       cacheHit: userCache.has(mentionedUsername)
     });
-    const user = await getCachedUser(mentionedUsername);
+    user = await getCachedUser(mentionedUsername);
+    if (!user) {
+      return NextResponse.json(
+        { error: `User ${mentionedUsername} not found` },
+        { status: 404 }
+      );
+    }
+
     console.log('User lookup result:', {
       found: !!user,
       userId: user?.id,
       userName: user?.name
     });
-    
-    let userMessages: Message[] = [];
     
     if (user) {
       // Only try to get user messages if we found the user
@@ -128,6 +137,14 @@ export async function POST(request: NextRequest) {
         console.error('Failed to get user messages:', err);
         return []; // Return empty array to allow fallback behavior
       });
+
+      if (userMessages.length === 0) {
+        return NextResponse.json(
+          { error: `No messages found for user ${user.name}` },
+          { status: 404 }
+        );
+      }
+
       console.log('User messages result:', {
         count: userMessages.length,
         messageIds: userMessages.map(m => m.id)
@@ -220,14 +237,14 @@ export async function POST(request: NextRequest) {
     });
 
     // Generate AI response with timeout
-    const response = await Promise.race([
+    const aiResponse = await Promise.race([
       generateResponse({
         message,
         username: user?.name ?? 'unknown',
         userMessages: formattedMessages,
         temperature: 0.7
       }),
-      new Promise((_, reject) => 
+      new Promise<never>((_, reject) => 
         setTimeout(() => reject(new Error('Response generation timed out')), 10000)
       )
     ]);
@@ -243,40 +260,23 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({
-      content: response,
+      content: aiResponse,
       username: user ? `FAKE ${user.name}` : 'AI Assistant',
       avatarUrl: user?.avatar_url ?? null
     });
   } catch (err) {
-    error = err as Error;
     console.error('Error in chat endpoint:', {
-      error,
-      duration: `${Date.now() - startTime}ms`
+      error: err,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      body,
+      user,
+      userMessagesCount: userMessages.length,
     });
-
-    // Return appropriate error response
-    if (error instanceof EnvironmentError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-
-    // Handle specific error types
-    const errorMessage = error.message.toLowerCase();
-    if (errorMessage.includes('not found') || errorMessage.includes('no such')) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
-    }
-    if (errorMessage.includes('permission') || errorMessage.includes('unauthorized')) {
-      return NextResponse.json({ error: error.message }, { status: 403 });
-    }
-    if (errorMessage.includes('invalid') || errorMessage.includes('bad request')) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    if (errorMessage.includes('timeout')) {
-      return NextResponse.json({ error: 'Request timed out' }, { status: 408 });
-    }
-
-    // Default to 500 for unknown errors
+    
+    // Generic error handling
     return NextResponse.json(
-      { error: 'Internal server error', details: error.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
