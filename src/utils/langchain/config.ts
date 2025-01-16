@@ -18,10 +18,15 @@ export interface ChatInput {
 
 // Initialize the OpenAI chat model
 export function createChatModel(temperature = 0.7) {
-  console.log('Creating chat model with tracing:', process.env.LANGCHAIN_TRACING);
+  console.log('Creating chat model with tracing:', process.env.LANGSMITH_TRACING);
   return new ChatOpenAI({
     modelName: 'gpt-4-turbo-preview',
     temperature,
+    verbose: process.env.LANGSMITH_TRACING === 'true',
+    tags: ['user-style-response'],
+    metadata: {
+      project: getLangchainProject(),
+    },
   });
 }
 

@@ -1,5 +1,6 @@
 import { Message } from '../supabase/types';
-import { createResponseChain, ChatInput } from './config';
+import { createChatModel } from './config';
+import { HumanMessage } from 'langchain/schema';
 
 export interface GenerateResponseOptions {
   message: string;
@@ -17,18 +18,28 @@ export async function generateResponse({
   try {
     console.log('Generating response with LLM for:', { message, username });
     
-    const input: ChatInput = {
-      currentMessage: message,
-      username,
-      userMessages,
-      temperature,
-    };
+    const model = createChatModel(temperature);
+    
+    const prompt = `You are impersonating a user named ${username}. 
+Below are some of their previous messages to understand their communication style:
 
-    console.log('Creating response chain with input:', input);
-    const response = await createResponseChain(input);
+${userMessages.map(msg => msg.content).join('\n\n')}
+
+Based on their style, respond to this message:
+${message}
+
+Remember to:
+1. Match their vocabulary, tone, and typical message length
+2. Use similar punctuation and capitalization patterns
+3. Maintain their level of formality/informality
+4. Include any common phrases or expressions they use
+
+Response:`;
+
+    const response = await model.invoke([new HumanMessage(prompt)]);
     console.log('Got LLM response:', response);
     
-    return response.text;
+    return typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
   } catch (error) {
     console.error('Error generating response:', error);
     throw new Error('Failed to generate response');

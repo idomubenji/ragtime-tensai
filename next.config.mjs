@@ -11,6 +11,10 @@ const nextConfig = {
     // Important: return the modified config
     return config;
   },
+  // Add production optimizations
+  poweredByHeader: false,
+  reactStrictMode: true,
+  swcMinify: true,
 }
 
 export default nextConfig; 
