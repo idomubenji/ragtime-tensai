@@ -31,30 +31,50 @@ export function createSupabaseClient(environment: Environment, type: 'default' |
       }
     );
   } else {
-    // Always use production URL since we're on Vercel
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
+    // Select URL based on environment
+    console.log('URL Selection:', {
+      environment,
+      NODE_ENV: process.env.NODE_ENV,
+      DEV_URL: process.env.NEXT_PUBLIC_SUPABASE_URL_DEV,
+      PROD_URL: process.env.NEXT_PUBLIC_SUPABASE_URL_PROD,
+      SERVICE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+    });
+
+    const url = environment === 'development'
+      ? process.env.NEXT_PUBLIC_SUPABASE_URL_DEV
+      : process.env.NEXT_PUBLIC_SUPABASE_URL_PROD;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!url || !key) {
-      console.error('Missing Supabase credentials:', {
-        hasUrl: !!url,
-        hasKey: !!key,
-        type
-      });
-      throw new Error('Missing required Supabase environment variables');
+    // Check each required variable individually
+    const missingVars = [];
+    if (environment === 'development' && !process.env.NEXT_PUBLIC_SUPABASE_URL_DEV) {
+      missingVars.push('NEXT_PUBLIC_SUPABASE_URL_DEV');
+    }
+    if (environment === 'production' && !process.env.NEXT_PUBLIC_SUPABASE_URL_PROD) {
+      missingVars.push('NEXT_PUBLIC_SUPABASE_URL_PROD');
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missingVars.push('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (missingVars.length > 0) {
+      const errorMsg = `Missing required Supabase environment variables: ${missingVars.join(', ')}`;
+      console.error(errorMsg);
+      console.error('Current environment:', process.env.NODE_ENV);
+      console.error('Available env vars:', Object.keys(process.env).filter(key => key.includes('SUPABASE')));
+      throw new Error(errorMsg);
     }
 
+    // At this point, we know url and key are defined
     console.log('Creating Supabase client:', {
       environment,
       type,
-      hasUrl: !!url,
-      hasKey: !!key,
-      url: url.substring(0, 10) + '...'
+      hasUrl: true,
+      hasKey: true,
+      url: url!.substring(0, 10) + '...'
     });
 
     return createClient<Database>(
-      url,
-      key,
+      url!,
+      key!,
       {
         auth: {
           persistSession: false

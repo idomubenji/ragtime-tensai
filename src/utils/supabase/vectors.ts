@@ -105,7 +105,7 @@ export async function findSimilarMessagesSmall(
 
   // 2. Database Connection Check
   console.log('Vector Search Step 2 - Database Connection:', {
-    url: process.env.VECTOR_SUPABASE_URL,
+    url: process.env.VECTOR_SUPABASE_URL?.substring(0, 10) + '...',
     hasServiceKey: !!process.env.VECTOR_SUPABASE_SERVICE_KEY,
     clientConfig: {
       hasAuth: !!client.auth
@@ -124,48 +124,33 @@ export async function findSimilarMessagesSmall(
     }
   });
 
-  const { data, error } = await client
-    .rpc('match_messages_small', {
-      query_embedding: embedding,
-      match_threshold: config.matchThreshold,
-      match_count: config.matchCount,
-      table_name: config.tableName,
-      filter_user_id: config.userId
-    });
+  const { data, error } = await client.rpc('match_messages_small', {
+    query_embedding: embedding,
+    match_threshold: config.matchThreshold,
+    match_count: config.matchCount,
+    table_name: config.tableName,
+    filter_user_id: config.userId
+  });
 
-  // 4. Error Handling
   if (error) {
-    console.error('Vector Search Step 4 - Error:', {
+    console.error('Vector search error:', {
       code: error.code,
       message: error.message,
       details: error.details,
       hint: error.hint,
-      tableName: config.tableName,
-      userId: config.userId
+      tableName: config.tableName
     });
-    throw new Error(`Failed to find similar messages: ${error.message}`);
+    throw error;
   }
 
-  // 5. Results Processing
-  console.log('Vector Search Step 5 - Results:', {
-    success: true,
+  console.log('Vector search results:', {
+    success: !error,
     resultCount: data?.length ?? 0,
-    userId: config.userId,
-    firstResult: data?.[0] ? {
-      id: data[0].id,
-      similarity: data[0].similarity,
-      hasMessageId: !!data[0].message_id,
-      matchesUserId: data[0].user_id === config.userId
-    } : null,
-    allResults: data?.map((r: SimilaritySearchResult) => ({
-      id: r.id,
-      similarity: r.similarity,
-      hasMessageId: !!r.message_id,
-      matchesUserId: r.user_id === config.userId
-    }))
+    tableName: config.tableName,
+    firstResult: data?.[0]
   });
 
-  return data;
+  return data || [];
 }
 
 /**
@@ -178,8 +163,7 @@ export function getVectorTableName(environment: Environment): string {
   console.log('Getting vector table name:', {
     environment,
     envTableName: process.env.VECTOR_TABLE_NAME,
-    baseName,
-    schemaQualified: `vector_store.${baseName}`
+    baseName
   });
   
   return baseName;
