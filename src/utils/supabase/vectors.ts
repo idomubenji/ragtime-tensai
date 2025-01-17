@@ -234,13 +234,9 @@ export async function testVectorSearch(environment: Environment) {
     const tableName = getVectorTableName(environment);
     console.log('Checking vector database for embeddings from user:', userId);
     const { data: vectorData, error: vectorError } = await vectorClient
-      .rpc('match_messages_small', {
-        query_embedding: Array(1536).fill(0),
-        match_threshold: 0.0,
-        match_count: 100,
-        table_name: tableName,
-        filter_user_id: userId
-      });
+      .from('vector_store.' + tableName)
+      .select('*')
+      .eq('user_id', userId);
 
     console.log('Vector database embeddings:', {
       success: !vectorError,
@@ -254,7 +250,7 @@ export async function testVectorSearch(environment: Environment) {
         id: m.id,
         message_id: m.message_id,
         user_id: m.user_id,
-        similarity: m.similarity
+        similarity: 'NaN'
       })),
       tableName: `vector_store.${tableName}`
     });
