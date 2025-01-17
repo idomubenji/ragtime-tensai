@@ -174,32 +174,22 @@ export async function findSimilarMessagesSmall(
  * Get the appropriate table name based on environment
  */
 export function getVectorTableName(environment: Environment): string {
-  // Check environment variables first
-  const envTableName = process.env.VECTOR_TABLE_NAME;
-  
-  // Default names based on environment
-  const defaultName = environment === 'production' 
-    ? 'message_embeddings_prod' 
-    : 'message_embeddings_dev';
-  
-  // Use environment variable if set, otherwise use default
-  const tableName = envTableName || defaultName;
-  
-  // Remove any schema prefix if present
-  const cleanTableName = tableName.replace(/^vector_store\./, '');
-  
+  const defaultName = environment === 'production' ? 'message_embeddings_prod' : 'message_embeddings_dev';
+  // Only use env var if we're in development
+  const finalTableName = environment === 'development' ? (process.env.VECTOR_TABLE_NAME || defaultName) : defaultName;
+
   console.log('Getting vector table name:', {
     environment,
-    envTableName,
+    envTableName: process.env.VECTOR_TABLE_NAME,
     defaultName,
-    finalTableName: cleanTableName,
+    finalTableName,
     env: {
       NODE_ENV: process.env.NODE_ENV,
       VECTOR_TABLE_NAME: process.env.VECTOR_TABLE_NAME
     }
   });
-  
-  return cleanTableName;
+
+  return finalTableName;
 }
 
 /**

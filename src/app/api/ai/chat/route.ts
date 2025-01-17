@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let error: Error | null = null;
   let user = null;
-  let userMessages: Message[] = [];
+  let vectorMessages: SimilaritySearchResult[] = [];
   let body: any;
 
   try {
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
       message, 
       mentionedUsername, 
       environment = 'development',
-      matchThreshold = 0.5  // Default to 0.5 if not provided
+      matchThreshold = 0.5
     } = body;
 
     // Validate environment first
@@ -107,288 +107,115 @@ export async function POST(request: NextRequest) {
       return getAuthErrorResponse();
     }
 
-    // Look up the mentioned user (with caching)
-    console.log('Looking up user:', {
+    // Step 1: Look up user in App database
+    console.log('Looking up user in App database:', {
       mentionedUsername,
-      environment,
-      cacheHit: userCache.has(mentionedUsername)
-    });
-    user = await getCachedUser(mentionedUsername, environment);
-    if (!user) {
-      console.log('User not found, falling back to all users:', {
-        mentionedUsername,
-        environment
-      });
-    }
-
-    console.log('User lookup result:', {
-      found: !!user,
-      userId: user?.id,
-      userName: user?.name
+      environment
     });
     
-    // Get messages from specified user or all users
-    console.log('Fetching messages:', {
-      userId: user?.id,
-      environment,
-      mode: user ? 'single user' : 'all users'
-    });
+    const appClient = createSupabaseClient(environment, 'default');
+    const { data: userData, error: userError } = await appClient
+      .from('users')
+      .select('id, name')
+      .eq('name', mentionedUsername)
+      .single();
 
-    if (user) {
-      userMessages = await getUserMessages(user.id, environment).catch(err => {
-        console.error('Failed to get user messages:', err);
-        return []; // Return empty array to allow fallback behavior
-      });
-
-      // Add keyword search for critical terms
-      const keywordMatches = userMessages.filter(msg => 
-        msg.content.toLowerCase().includes('baby') || 
-        msg.content.toLowerCase().includes('child') ||
-        msg.content.toLowerCase().includes('kid')
-      );
-
-      console.log('Found keyword matches:', {
-        count: keywordMatches.length,
-        matches: keywordMatches.map(msg => ({
-          id: msg.id,
-          content: msg.content
-        }))
-      });
-
-      // Sort messages by recency
-      userMessages.sort((a, b) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-
-      // Ensure keyword matches are included in the context
-      const keywordMatchIds = new Set(keywordMatches.map(m => m.id));
-      const recentMessages = userMessages.slice(0, 50);  // Get 50 most recent messages
-      const recentMessageIds = new Set(recentMessages.map(m => m.id));
-      
-      // Combine keyword matches with recent messages, avoiding duplicates
-      userMessages = [
-        ...keywordMatches.filter(m => !recentMessageIds.has(m.id)),
-        ...recentMessages
-      ];
-
-      console.log('Final message selection:', {
-        total: userMessages.length,
-        keywordMatches: keywordMatches.length,
-        recentMessages: recentMessages.length,
-        combined: userMessages.length
-      });
-    } else {
-      // Fetch messages from all users when no specific user found
-      const client = createSupabaseClient(environment, 'default');
-      const { data, error } = await client
-        .from('messages')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (error) {
-        console.error('Failed to get messages:', error);
-        userMessages = [];
-      } else {
-        userMessages = data;
-      }
-    }
-
-    if (userMessages.length === 0) {
+    if (userError || !userData) {
+      console.error('Failed to find user:', userError);
       return NextResponse.json(
-        { error: 'No messages found in the database' },
+        { error: 'User not found' },
         { status: 404 }
       );
     }
 
-    console.log('Messages result:', {
-      count: userMessages.length,
-      messageIds: userMessages.map(m => m.id)
-    });
+    const userId = userData.id;
+    const userName = userData.name;
+    console.log('Found user:', { userId, userName });
 
-    // Get message embedding
-    console.log('Generating message embedding:', {
-      message,
-      cacheHit: embeddingCache.has(message)
-    });
-    const messageEmbedding = await getCachedEmbedding(message).catch(err => {
-      console.error('Failed to generate embedding:', err);
-      throw new Error('Failed to process message embedding');
-    });
-    console.log('Embedding generated:', {
-      dimensions: messageEmbedding.length
-    });
-
-    // Find similar messages with retry
-    let similarMessages: SimilaritySearchResult[];
+    // Step 3: Get ALL messages for this user from Vector database
+    console.log('Getting all messages from Vector database for user');
+    const vectorClient = createSupabaseClient(environment, 'vector');
+    const tableName = getVectorTableName(environment);
+    
     try {
-      const vectorClient = createSupabaseClient(environment, 'vector');
-      const tableName = getVectorTableName(environment);
-      console.log('Vector search attempt:', {
-        environment,
-        tableName,
-        embeddingSize: messageEmbedding.length,
-        userId: user?.id,
-        matchThreshold,
-        matchCount: 20  // Increased to get more candidates
+      // Get ALL messages for this user from vector store
+      const { data: vectorMessages, error: vectorError } = await vectorClient
+        .from(tableName)
+        .select('*')
+        .eq('user_id', userId);
+
+      if (vectorError) {
+        console.error('Failed to get vector messages:', vectorError);
+        throw new Error('Failed to get messages from vector store');
+      }
+
+      console.log('Vector store results:', {
+        count: vectorMessages.length,
+        tableName: `vector_store.${tableName}`,
+        sampleResults: vectorMessages.slice(0, 5).map(msg => ({
+          id: msg.id,
+          messageId: msg.message_id
+        }))
       });
 
-      similarMessages = await findSimilarMessagesSmall(vectorClient, messageEmbedding, {
-        tableName,
-        matchThreshold: 0.6,  // Lower threshold to get more candidates
-        matchCount: 30,  // Get more candidates for filtering
-        userId: user?.id
+      if (vectorMessages.length === 0) {
+        return NextResponse.json(
+          { error: 'No messages found for this user in vector store' },
+          { status: 404 }
+        );
+      }
+
+      // Get the full message content for ALL messages
+      const messageIds = vectorMessages.map(msg => msg.message_id);
+      const { data: fullMessages, error: messagesError } = await appClient
+        .from('messages')
+        .select('*')
+        .in('id', messageIds);
+
+      if (messagesError) {
+        console.error('Failed to get message content:', messagesError);
+        throw new Error('Failed to get message content');
+      }
+
+      // Combine vector results with full messages
+      const combinedMessages = vectorMessages.map(vectorMsg => {
+        const fullMessage = fullMessages.find(msg => msg.id === vectorMsg.message_id);
+        if (!fullMessage) {
+          console.warn('Could not find content for message:', vectorMsg.message_id);
+          return null;
+        }
+        return {
+          ...fullMessage,
+          embedding: vectorMsg.embedding // Include the embedding for potential use in RAG
+        };
+      }).filter(Boolean) as Message[];
+
+      // Step 4: Generate AI response using ALL messages as context
+      const response = await generateResponse({
+        message,
+        username: userName,
+        userMessages: combinedMessages,
+        temperature: 0.7
       });
 
-      // Apply stricter filtering and deduplication with personal info boost
-      const personalKeywords = ['my', 'i', 'mine', 'we', 'our', 'family', 'baby', 'kid', 'child', 'husband', 'wife', 'partner'];
-      const filteredMessages = similarMessages
-        .map(msg => {
-          // Find the full message to check content
-          const fullMessage = userMessages.find(m => m.id === msg.message_id);
-          if (!fullMessage) return msg;
-
-          // Boost similarity for messages containing personal information
-          const hasPersonalInfo = personalKeywords.some(keyword => 
-            fullMessage.content.toLowerCase().includes(keyword)
-          );
-          const personalBoost = hasPersonalInfo ? 0.1 : 0; // 10% boost for personal info
-
-          return {
-            ...msg,
-            similarity: msg.similarity + personalBoost
-          };
-        })
-        .filter(msg => msg.similarity > 0.7)  // Quality threshold after boosts
-        .reduce((unique, msg) => {
-          // Check if we already have a very similar message
-          const isDuplicate = unique.some(u => 
-            u.similarity > msg.similarity * 0.95  // Messages within 5% similarity are considered duplicates
-          );
-          return isDuplicate ? unique : [...unique, msg];
-        }, [] as SimilaritySearchResult[])
-        .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, 15);  // Keep more messages for context
-
-      console.log('Vector search results:', {
-        rawCount: similarMessages.length,
-        filteredCount: filteredMessages.length,
-        personalInfoCount: filteredMessages.filter(msg => {
-          const fullMessage = userMessages.find(m => m.id === msg.message_id);
-          return fullMessage && personalKeywords.some(keyword => 
-            fullMessage.content.toLowerCase().includes(keyword)
-          );
-        }).length,
-        userId: user?.id,
-        tableName,
-        results: filteredMessages.map(msg => {
-          const fullMessage = userMessages.find(m => m.id === msg.message_id);
-          return {
-            id: msg.id,
-            messageId: msg.message_id,
-            similarity: msg.similarity,
-            userId: msg.user_id,
-            fullContent: fullMessage?.content || 'Message not found',
-            hasPersonalInfo: fullMessage ? personalKeywords.some(keyword => 
-              fullMessage.content.toLowerCase().includes(keyword)
-            ) : false
-          };
-        })
+      return NextResponse.json({
+        response,
+        metadata: {
+          userId,
+          messageCount: combinedMessages.length,
+          executionTime: Date.now() - startTime
+        }
       });
 
-      similarMessages = filteredMessages;  // Use filtered results
     } catch (err) {
-      console.error('Failed to find similar messages:', {
-        error: err,
-        errorMessage: err instanceof Error ? err.message : String(err),
-        errorStack: err instanceof Error ? err.stack : undefined,
-        userId: user?.id,
-        environment,
-        tableName: getVectorTableName(environment)
-      });
-      // Fallback to empty array if vector search fails
-      similarMessages = [];
+      console.error('Failed to search vector database:', err);
+      throw new Error('Failed to search message history');
     }
 
-    // Format messages for the AI
-    const formattedMessages = similarMessages.map((similarMsg: any) => {
-      // Find the full message content from userMessages
-      const fullMessage = userMessages.find(msg => msg.id === similarMsg.message_id);
-      if (!fullMessage) {
-        console.warn('Could not find message content for:', {
-          messageId: similarMsg.message_id,
-          similarity: similarMsg.similarity
-        });
-        return null;
-      }
-      
-      return {
-        ...fullMessage,
-        similarity: similarMsg.similarity // Add similarity score for debugging
-      };
-    }).filter(Boolean) as Message[];
-
-    console.log('Formatted messages for LLM:', {
-      count: formattedMessages.length,
-      messages: formattedMessages.map(msg => ({
-        id: msg.id,
-        content: msg.content?.substring(0, 50) + '...',
-        similarity: (msg as any).similarity
-      }))
-    });
-
-    // Generate AI response with timeout
-    const aiResponse = await Promise.race([
-      generateResponse({
-        message,
-        username: user?.name ?? 'unknown',
-        userMessages: formattedMessages,
-        temperature: 0.7
-      }),
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Response generation timed out')), 10000)
-      )
-    ]);
-
-    const duration = Date.now() - startTime;
-    console.info('Chat request completed:', {
-      duration: `${duration}ms`,
-      similarMessagesFound: similarMessages.length,
-      cacheHits: {
-        user: userCache.has(mentionedUsername),
-        embedding: embeddingCache.has(message)
-      }
-    });
-
-    return NextResponse.json({
-      content: aiResponse,
-      username: user ? `FAKE ${user.name}` : 'AI Assistant',
-      avatarUrl: user?.avatar_url ?? null
-    });
   } catch (err) {
-    console.error('Error in chat endpoint:', {
-      error: err,
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-      body,
-      user,
-      userMessagesCount: userMessages.length,
-      environmentVars: {
-        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
-        hasVectorUrl: !!process.env.VECTOR_SUPABASE_URL,
-        hasVectorKey: !!process.env.VECTOR_SUPABASE_SERVICE_KEY,
-        hasVectorTable: !!process.env.VECTOR_TABLE_NAME,
-        environment: body?.environment,
-      }
-    });
-    
-    // Return the actual error message in development
-    const errorMessage = process.env.NODE_ENV === 'development' 
-      ? err instanceof Error ? err.message : String(err)
-      : 'Internal server error';
-    
+    console.error('Error in chat endpoint:', err);
     return NextResponse.json(
-      { error: errorMessage },
+      { error: err instanceof Error ? err.message : 'Internal server error' },
       { status: 500 }
     );
   }
