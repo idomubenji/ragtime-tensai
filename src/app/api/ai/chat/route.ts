@@ -107,38 +107,43 @@ export async function POST(request: NextRequest) {
       return getAuthErrorResponse();
     }
 
-    // Step 1: Look up user in App database
-    console.log('Looking up user in App database:', {
-      mentionedUsername,
-      environment
-    });
-    
-    const appClient = createSupabaseClient(environment, 'default');
-    const { data: userData, error: userError } = await appClient
-      .from('users')
-      .select('id, name')
-      .eq('name', mentionedUsername)
-      .single();
+    let userId: string | undefined;
+    let userName: string | undefined;
 
-    if (userError || !userData) {
-      console.error('Failed to find user:', userError);
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+    // Step 1: Look up user in App database (if username provided)
+    if (mentionedUsername) {
+      console.log('Looking up user in App database:', {
+        mentionedUsername,
+        environment
+      });
+      
+      const appClient = createSupabaseClient(environment, 'default');
+      const { data: userData, error: userError } = await appClient
+        .from('users')
+        .select('id, name')
+        .eq('name', mentionedUsername)
+        .single();
+
+      if (userError) {
+        console.error('Failed to find user:', userError);
+        return NextResponse.json(
+          { error: 'User not found' },
+          { status: 404 }
+        );
+      }
+
+      userId = userData.id;
+      userName = userData.name;
+      console.log('Found user:', { userId, userName });
     }
 
-    const userId = userData.id;
-    const userName = userData.name;
-    console.log('Found user:', { userId, userName });
-
-    // Step 3: Get ALL messages for this user from Vector database
-    console.log('Getting all messages from Vector database for user');
+    // Step 2: Get messages from Vector database (all or filtered by user)
+    console.log('Getting messages from Vector database', userId ? 'for user' : 'for all users');
     const vectorClient = createSupabaseClient(environment, 'vector');
     const tableName = getVectorTableName(environment);
     
     try {
-      // Get ALL messages for this user from vector store using match_messages
+      // Get messages from vector store using match_messages
       const { data: vectorMessages, error: vectorError } = await vectorClient
         .rpc('match_messages', {
           query_embedding: Array(3072).fill(0),  // Dummy embedding to match all messages
@@ -152,27 +157,30 @@ export async function POST(request: NextRequest) {
         throw new Error('Failed to get messages from vector store');
       }
 
-      // Filter messages for this user
-      const userVectorMessages = (vectorMessages as SimilaritySearchResult[]).filter(msg => msg.user_id === userId);
+      // Filter messages by user if specified
+      const filteredMessages = userId 
+        ? (vectorMessages as SimilaritySearchResult[]).filter(msg => msg.user_id === userId)
+        : (vectorMessages as SimilaritySearchResult[]);
 
       console.log('Vector store results:', {
-        count: userVectorMessages.length,
+        count: filteredMessages.length,
         tableName: `vector_store.${tableName}`,
-        sampleResults: userVectorMessages.slice(0, 5).map((msg: SimilaritySearchResult) => ({
+        sampleResults: filteredMessages.slice(0, 5).map((msg: SimilaritySearchResult) => ({
           id: msg.id,
           messageId: msg.message_id
         }))
       });
 
-      if (userVectorMessages.length === 0) {
+      if (filteredMessages.length === 0) {
         return NextResponse.json(
-          { error: 'No messages found for this user in vector store' },
+          { error: userId ? 'No messages found for this user in vector store' : 'No messages found in vector store' },
           { status: 404 }
         );
       }
 
       // Get the full message content for ALL messages
-      const messageIds = userVectorMessages.map((msg: SimilaritySearchResult) => msg.message_id);
+      const appClient = createSupabaseClient(environment, 'default');
+      const messageIds = filteredMessages.map((msg: SimilaritySearchResult) => msg.message_id);
       const { data: fullMessages, error: messagesError } = await appClient
         .from('messages')
         .select('*')
@@ -184,7 +192,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Combine vector results with full messages
-      const combinedMessages = userVectorMessages.map((vectorMsg: SimilaritySearchResult) => {
+      const combinedMessages = filteredMessages.map((vectorMsg: SimilaritySearchResult) => {
         const fullMessage = fullMessages?.find(msg => msg.id === vectorMsg.message_id);
         if (!fullMessage) {
           console.warn('Could not find content for message:', vectorMsg.message_id);
@@ -196,10 +204,10 @@ export async function POST(request: NextRequest) {
         };
       }).filter(Boolean) as Message[];
 
-      // Step 4: Generate AI response using ALL messages as context
+      // Step 3: Generate AI response using messages as context
       const response = await generateResponse({
         message,
-        username: userName,
+        username: userName || 'unknown',  // Provide a default value
         userMessages: combinedMessages,
         temperature: 0.7
       });
@@ -207,7 +215,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         response,
         metadata: {
-          userId,
+          userId,  // Will be undefined if no user specified
           messageCount: combinedMessages.length,
           executionTime: Date.now() - startTime
         }
