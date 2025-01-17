@@ -138,27 +138,33 @@ export async function POST(request: NextRequest) {
     const tableName = getVectorTableName(environment);
     
     try {
-      // Get ALL messages for this user from vector store
+      // Get ALL messages for this user from vector store using match_messages
       const { data: vectorMessages, error: vectorError } = await vectorClient
-        .from(`vector_store.${tableName}`)
-        .select('*')
-        .eq('user_id', userId);
+        .rpc('match_messages', {
+          query_embedding: Array(3072).fill(0),  // Dummy embedding to match all messages
+          match_threshold: 0.0,  // Match everything
+          match_count: 1000,     // Get all messages
+          table_name: tableName
+        });
 
       if (vectorError) {
         console.error('Failed to get vector messages:', vectorError);
         throw new Error('Failed to get messages from vector store');
       }
 
+      // Filter messages for this user
+      const userVectorMessages = (vectorMessages as SimilaritySearchResult[]).filter(msg => msg.user_id === userId);
+
       console.log('Vector store results:', {
-        count: vectorMessages.length,
+        count: userVectorMessages.length,
         tableName: `vector_store.${tableName}`,
-        sampleResults: vectorMessages.slice(0, 5).map(msg => ({
+        sampleResults: userVectorMessages.slice(0, 5).map((msg: SimilaritySearchResult) => ({
           id: msg.id,
           messageId: msg.message_id
         }))
       });
 
-      if (vectorMessages.length === 0) {
+      if (userVectorMessages.length === 0) {
         return NextResponse.json(
           { error: 'No messages found for this user in vector store' },
           { status: 404 }
@@ -166,7 +172,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Get the full message content for ALL messages
-      const messageIds = vectorMessages.map(msg => msg.message_id);
+      const messageIds = userVectorMessages.map((msg: SimilaritySearchResult) => msg.message_id);
       const { data: fullMessages, error: messagesError } = await appClient
         .from('messages')
         .select('*')
@@ -178,15 +184,15 @@ export async function POST(request: NextRequest) {
       }
 
       // Combine vector results with full messages
-      const combinedMessages = vectorMessages.map(vectorMsg => {
-        const fullMessage = fullMessages.find(msg => msg.id === vectorMsg.message_id);
+      const combinedMessages = userVectorMessages.map((vectorMsg: SimilaritySearchResult) => {
+        const fullMessage = fullMessages?.find(msg => msg.id === vectorMsg.message_id);
         if (!fullMessage) {
           console.warn('Could not find content for message:', vectorMsg.message_id);
           return null;
         }
         return {
           ...fullMessage,
-          embedding: vectorMsg.embedding // Include the embedding for potential use in RAG
+          similarity: vectorMsg.similarity  // Keep similarity score for potential ranking
         };
       }).filter(Boolean) as Message[];
 
