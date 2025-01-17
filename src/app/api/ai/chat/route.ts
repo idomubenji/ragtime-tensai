@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
 
     let userId: string | undefined;
     let userName: string | undefined;
+    let userAvatarUrl: string | null | undefined;
 
     // Step 1: Look up user in App database (if username provided)
     if (mentionedUsername) {
@@ -120,7 +121,7 @@ export async function POST(request: NextRequest) {
       const appClient = createSupabaseClient(environment, 'default');
       const { data: userData, error: userError } = await appClient
         .from('users')
-        .select('id, name')
+        .select('id, name, avatar_url')
         .eq('name', mentionedUsername)
         .single();
 
@@ -134,7 +135,8 @@ export async function POST(request: NextRequest) {
 
       userId = userData.id;
       userName = userData.name;
-      console.log('Found user:', { userId, userName });
+      userAvatarUrl = userData.avatar_url;
+      console.log('Found user:', { userId, userName, userAvatarUrl });
     }
 
     // Step 2: Get messages from Vector database (all or filtered by user)
@@ -216,6 +218,8 @@ export async function POST(request: NextRequest) {
         response,
         metadata: {
           userId,  // Will be undefined if no user specified
+          username: userName,
+          avatarUrl: userAvatarUrl,
           messageCount: combinedMessages.length,
           executionTime: Date.now() - startTime
         }
