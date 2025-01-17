@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
     try {
       // Get ALL messages for this user from vector store
       const { data: vectorMessages, error: vectorError } = await vectorClient
-        .from('vector_store.' + tableName)
+        .from(`vector_store.${tableName}`)
         .select('*')
         .eq('user_id', userId);
 
