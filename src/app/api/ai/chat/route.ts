@@ -139,6 +139,44 @@ export async function POST(request: NextRequest) {
         console.error('Failed to get user messages:', err);
         return []; // Return empty array to allow fallback behavior
       });
+
+      // Add keyword search for critical terms
+      const keywordMatches = userMessages.filter(msg => 
+        msg.content.toLowerCase().includes('baby') || 
+        msg.content.toLowerCase().includes('child') ||
+        msg.content.toLowerCase().includes('kid')
+      );
+
+      console.log('Found keyword matches:', {
+        count: keywordMatches.length,
+        matches: keywordMatches.map(msg => ({
+          id: msg.id,
+          content: msg.content
+        }))
+      });
+
+      // Sort messages by recency
+      userMessages.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      // Ensure keyword matches are included in the context
+      const keywordMatchIds = new Set(keywordMatches.map(m => m.id));
+      const recentMessages = userMessages.slice(0, 50);  // Get 50 most recent messages
+      const recentMessageIds = new Set(recentMessages.map(m => m.id));
+      
+      // Combine keyword matches with recent messages, avoiding duplicates
+      userMessages = [
+        ...keywordMatches.filter(m => !recentMessageIds.has(m.id)),
+        ...recentMessages
+      ];
+
+      console.log('Final message selection:', {
+        total: userMessages.length,
+        keywordMatches: keywordMatches.length,
+        recentMessages: recentMessages.length,
+        combined: userMessages.length
+      });
     } else {
       // Fetch messages from all users when no specific user found
       const client = createSupabaseClient(environment, 'default');
@@ -192,27 +230,73 @@ export async function POST(request: NextRequest) {
         embeddingSize: messageEmbedding.length,
         userId: user?.id,
         matchThreshold,
-        matchCount: 10
+        matchCount: 20  // Increased to get more candidates
       });
 
       similarMessages = await findSimilarMessagesSmall(vectorClient, messageEmbedding, {
         tableName,
-        matchThreshold,
-        matchCount: 10,
+        matchThreshold: 0.6,  // Lower threshold to get more candidates
+        matchCount: 30,  // Get more candidates for filtering
         userId: user?.id
       });
 
+      // Apply stricter filtering and deduplication with personal info boost
+      const personalKeywords = ['my', 'i', 'mine', 'we', 'our', 'family', 'baby', 'kid', 'child', 'husband', 'wife', 'partner'];
+      const filteredMessages = similarMessages
+        .map(msg => {
+          // Find the full message to check content
+          const fullMessage = userMessages.find(m => m.id === msg.message_id);
+          if (!fullMessage) return msg;
+
+          // Boost similarity for messages containing personal information
+          const hasPersonalInfo = personalKeywords.some(keyword => 
+            fullMessage.content.toLowerCase().includes(keyword)
+          );
+          const personalBoost = hasPersonalInfo ? 0.1 : 0; // 10% boost for personal info
+
+          return {
+            ...msg,
+            similarity: msg.similarity + personalBoost
+          };
+        })
+        .filter(msg => msg.similarity > 0.7)  // Quality threshold after boosts
+        .reduce((unique, msg) => {
+          // Check if we already have a very similar message
+          const isDuplicate = unique.some(u => 
+            u.similarity > msg.similarity * 0.95  // Messages within 5% similarity are considered duplicates
+          );
+          return isDuplicate ? unique : [...unique, msg];
+        }, [] as SimilaritySearchResult[])
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 15);  // Keep more messages for context
+
       console.log('Vector search results:', {
-        count: similarMessages.length,
+        rawCount: similarMessages.length,
+        filteredCount: filteredMessages.length,
+        personalInfoCount: filteredMessages.filter(msg => {
+          const fullMessage = userMessages.find(m => m.id === msg.message_id);
+          return fullMessage && personalKeywords.some(keyword => 
+            fullMessage.content.toLowerCase().includes(keyword)
+          );
+        }).length,
         userId: user?.id,
         tableName,
-        results: similarMessages.map(msg => ({
-          id: msg.id,
-          messageId: msg.message_id,
-          similarity: msg.similarity,
-          userId: msg.user_id
-        }))
+        results: filteredMessages.map(msg => {
+          const fullMessage = userMessages.find(m => m.id === msg.message_id);
+          return {
+            id: msg.id,
+            messageId: msg.message_id,
+            similarity: msg.similarity,
+            userId: msg.user_id,
+            fullContent: fullMessage?.content || 'Message not found',
+            hasPersonalInfo: fullMessage ? personalKeywords.some(keyword => 
+              fullMessage.content.toLowerCase().includes(keyword)
+            ) : false
+          };
+        })
       });
+
+      similarMessages = filteredMessages;  // Use filtered results
     } catch (err) {
       console.error('Failed to find similar messages:', {
         error: err,

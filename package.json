@@ -2,6 +2,7 @@
   "name": "ragtime-tensai",
   "version": "1.0.0",
   "description": "AI chat bot that responds as users from the database",
+  "type": "module",
   "engines": {
     "node": ">=18.17.0",
     "npm": ">=9.0.0"

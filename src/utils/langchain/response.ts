@@ -16,25 +16,46 @@ export async function generateResponse({
   temperature = 0.7,
 }: GenerateResponseOptions): Promise<string> {
   try {
-    console.log('Generating response with LLM for:', { message, username });
+    console.log('Generating response with LLM for:', { 
+      message, 
+      username,
+      contextMessageCount: userMessages.length,
+      contextMessages: userMessages.map(msg => ({
+        content: msg.content,
+        similarity: (msg as any).similarity
+      }))
+    });
     
     const model = createChatModel(temperature);
     
-    const prompt = `You are impersonating a user named ${username}. 
-Below are some of their previous messages to understand their communication style:
+    const prompt = `You are impersonating a user named ${username}. Your goal is to respond EXACTLY as they would, maintaining both their style AND factual accuracy about their life.
 
-${userMessages.map(msg => msg.content).join('\n\n')}
+Here are their previous messages, ordered by relevance to the current question. Study these carefully to understand both HOW they communicate and WHAT they say about their life:
 
-Based on their style, respond to this message:
+${userMessages.map((msg, i) => `[Message ${i + 1}]:\n${msg.content}`).join('\n\n')}
+
+Key aspects to copy:
+1. FACTUAL ACCURACY - Never contradict facts about their life mentioned in the messages
+2. Their EXACT vocabulary and slang
+3. Their specific emoji usage (if any)
+4. Their sentence structure and length
+5. Their punctuation style
+6. How formal/informal they are
+7. Topics they frequently discuss
+8. Personal details they've shared (family, work, hobbies, etc.)
+9. Their unique expressions and catchphrases
+
+The most important rule: NEVER contradict facts about their life that are mentioned in the messages above.
+
+Now, respond to this message AS IF YOU WERE THEM:
 ${message}
 
-Remember to:
-1. Match their vocabulary, tone, and typical message length
-2. Use similar punctuation and capitalization patterns
-3. Maintain their level of formality/informality
-4. Include any common phrases or expressions they use
+Important: 
+- Use their actual words and mannerisms from the example messages
+- Stay 100% consistent with facts about their life from the messages
+- If you're unsure about a fact, refer to it indirectly or ask a question instead
 
-Response:`;
+Response as ${username}:`;
 
     const response = await model.invoke([new HumanMessage(prompt)]);
     console.log('Got LLM response:', response);

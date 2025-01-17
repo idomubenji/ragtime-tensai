@@ -138,16 +138,33 @@ export async function findSimilarMessagesSmall(
       message: error.message,
       details: error.details,
       hint: error.hint,
-      tableName: config.tableName
+      table: config.tableName,
+      query: {
+        embedding_size: embedding.length,
+        threshold: config.matchThreshold,
+        count: config.matchCount,
+        user_id: config.userId
+      }
     });
     throw error;
   }
 
-  console.log('Vector search results:', {
+  // Log successful search details
+  console.log('Vector search details:', {
     success: !error,
     resultCount: data?.length ?? 0,
-    tableName: config.tableName,
-    firstResult: data?.[0]
+    table: config.tableName,
+    firstResult: data?.[0] ? {
+      id: data[0].id,
+      similarity: data[0].similarity,
+      message_id: data[0].message_id
+    } : null,
+    query: {
+      embedding_size: embedding.length,
+      threshold: config.matchThreshold,
+      count: config.matchCount,
+      user_id: config.userId
+    }
   });
 
   return data || [];
@@ -157,16 +174,32 @@ export async function findSimilarMessagesSmall(
  * Get the appropriate table name based on environment
  */
 export function getVectorTableName(environment: Environment): string {
-  const baseName = process.env.VECTOR_TABLE_NAME || 
-    (environment === 'production' ? 'message_embeddings_prod' : 'message_embeddings_dev');
+  // Check environment variables first
+  const envTableName = process.env.VECTOR_TABLE_NAME;
+  
+  // Default names based on environment
+  const defaultName = environment === 'production' 
+    ? 'message_embeddings_prod' 
+    : 'message_embeddings_dev';
+  
+  // Use environment variable if set, otherwise use default
+  const tableName = envTableName || defaultName;
+  
+  // Remove any schema prefix if present
+  const cleanTableName = tableName.replace(/^vector_store\./, '');
   
   console.log('Getting vector table name:', {
     environment,
-    envTableName: process.env.VECTOR_TABLE_NAME,
-    baseName
+    envTableName,
+    defaultName,
+    finalTableName: cleanTableName,
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      VECTOR_TABLE_NAME: process.env.VECTOR_TABLE_NAME
+    }
   });
   
-  return baseName;
+  return cleanTableName;
 }
 
 /**
@@ -183,72 +216,71 @@ export async function testVectorSearch(environment: Environment) {
   console.log('Starting vector search test...');
   
   try {
-    // 1. Create vector client
-    const client = createSupabaseClient(environment, 'vector');
-    console.log('Vector client created:', {
-      url: process.env.VECTOR_SUPABASE_URL,
-      hasServiceKey: !!process.env.VECTOR_SUPABASE_SERVICE_KEY
-    });
-
-    // 2. Test simple RPC call first
-    console.log('Testing RPC connection...');
-    const { data: rpcTest, error: rpcError } = await client.rpc('vector_begin_transaction');
-    console.log('RPC test result:', {
-      success: !rpcError,
-      error: rpcError ? {
-        code: rpcError.code,
-        message: rpcError.message,
-        details: rpcError.details,
-        hint: rpcError.hint
-      } : null
-    });
-
-    // 3. Get available functions
-    console.log('Checking available functions...');
-    const { data: functions, error: funcError } = await client
-      .rpc('run_sql', {
-        sql: "SELECT proname, pronamespace::regnamespace as schema FROM pg_proc WHERE pronamespace::regnamespace = 'vector_store'::regnamespace;"
-      });
+    // Create separate clients for each database
+    const appClient = createSupabaseClient(environment, 'default');
+    const vectorClient = createSupabaseClient(environment, 'vector');
     
-    console.log('Available functions:', {
-      success: !funcError,
-      functions: functions,
-      error: funcError ? {
-        code: funcError.code,
-        message: funcError.message,
-        details: funcError.details,
-        hint: funcError.hint
-      } : null
-    });
+    // Step 1: Start with a username
+    const mentionedUsername = 'Kurakami';
+    console.log('Starting with mentioned username:', mentionedUsername);
 
-    // 4. Test vector search with minimal parameters
-    console.log('Testing vector search with minimal params...');
-    const testEmbedding = new Array(1536).fill(0.1);
-    const { data: searchResult, error: searchError } = await client
+    // Step 2: Find the user's ID from the users table
+    console.log('Looking up user ID for username:', mentionedUsername);
+    const { data: userData, error: userError } = await appClient
+      .from('users')
+      .select('id')
+      .eq('name', mentionedUsername)
+      .single();
+
+    if (userError) {
+      console.error('Failed to find user:', userError);
+      throw userError;
+    }
+
+    const userId = userData.id;
+    console.log('Found user ID:', userId);
+
+    // Step 3: Find all embeddings for this user in the vector store
+    const tableName = getVectorTableName(environment);
+    console.log('Checking vector database for embeddings from user:', userId);
+    const { data: vectorData, error: vectorError } = await vectorClient
       .rpc('match_messages_small', {
-        query_embedding: testEmbedding,
-        match_threshold: 0.8,
-        match_count: 1,
-        table_name: getVectorTableName(environment)
+        query_embedding: Array(1536).fill(0),
+        match_threshold: 0.0,
+        match_count: 100,
+        table_name: tableName,
+        filter_user_id: userId
       });
 
-    console.log('Vector search test result:', {
-      success: !searchError,
-      resultCount: searchResult?.length ?? 0,
-      error: searchError ? {
-        code: searchError.code,
-        message: searchError.message,
-        details: searchError.details,
-        hint: searchError.hint
+    console.log('Vector database embeddings:', {
+      success: !vectorError,
+      resultCount: vectorData?.length ?? 0,
+      error: vectorError ? {
+        code: vectorError.code,
+        message: vectorError.message,
+        details: vectorError.details
       } : null,
-      firstResult: searchResult?.[0]
+      sampleEmbeddings: vectorData?.slice(0, 5).map((m: any) => ({
+        id: m.id,
+        message_id: m.message_id,
+        user_id: m.user_id,
+        similarity: m.similarity
+      })),
+      tableName: `vector_store.${tableName}`
     });
 
     return {
-      success: !rpcError && !funcError && !searchError,
-      rpcTest: !rpcError,
-      functionsCheck: !funcError,
-      searchTest: !searchError
+      success: !vectorError && !userError,
+      userLookup: {
+        success: !userError,
+        username: mentionedUsername,
+        userId: userId
+      },
+      vectorDatabase: {
+        success: !vectorError,
+        embeddingCount: vectorData?.length ?? 0,
+        tableName: `vector_store.${tableName}`
+      }
     };
   } catch (err) {
     console.error('Test failed with error:', err);
